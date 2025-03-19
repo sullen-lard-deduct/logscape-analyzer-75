@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from "react";
 import { toast } from "sonner";
 import { Upload, X, FileArchive, FileText, LoaderCircle } from "lucide-react";
@@ -45,10 +44,27 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
     }
   };
 
+  const processLogFile = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          resolve(event.target.result as string);
+        } else {
+          reject(new Error("Failed to read file"));
+        }
+      };
+      
+      reader.onerror = () => {
+        reject(new Error("Error reading file"));
+      };
+      
+      reader.readAsText(file);
+    });
+  };
+
   const simulateFileProcessing = async (file: File) => {
-    // This simulates the processing steps
-    // In a real implementation, this would communicate with a backend
-    
     try {
       setStatus("uploading");
       setCurrentStep("uploading");
@@ -71,68 +87,36 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
         setCurrentStep("extracting");
         await new Promise(r => setTimeout(r, 800));
         
-        // Simulate extraction validation (in real app, this would check contents after extraction)
-        const mockExtractedFiles = ["example.log", "data.txt", "readme.md"];
-        const hasLogFile = mockExtractedFiles.some(f => isLogFile(f));
-        
-        if (!hasLogFile) {
-          throw new Error("No log files found in the archive");
-        }
+        // In a real app with a backend, we would extract the archive here
+        // For this front-end demo, we'll just simulate it
+        toast.warning("Compressed file extraction is simulated in this demo");
+        throw new Error("For this demo, please upload a .log or .txt file directly");
       }
       
       setCurrentStep("analyzing");
       await new Promise(r => setTimeout(r, 700));
       
-      // Simulate successful processing
-      setStatus("success");
+      // Actually read the file content
+      const content = await processLogFile(file);
       
-      // Generate mock log content for demo purposes
-      // In a real app, this would be the actual content from the file
-      const mockLogContent = generateMockLogContent();
-      onFileProcessed(mockLogContent);
+      // Validate that the file has the expected timestamp format
+      const lines = content.split('\n');
+      const hasValidTimestampFormat = lines.some(line => 
+        /^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}\.\d{6}/.test(line)
+      );
+      
+      if (!hasValidTimestampFormat) {
+        throw new Error("The file does not contain logs with the expected timestamp format (YYYY/MM/DD HH:mm:ss.SSSSSS)");
+      }
+      
+      setStatus("success");
+      onFileProcessed(content);
       
       toast.success("File processed successfully");
     } catch (error) {
       setStatus("error");
       toast.error(error instanceof Error ? error.message : "Error processing file");
     }
-  };
-
-  const generateMockLogContent = (): string => {
-    // Generate realistic looking log data
-    const lines = [];
-    const now = new Date();
-    
-    for (let i = 0; i < 1000; i++) {
-      const timestamp = new Date(now.getTime() - (1000 - i) * 60000);
-      const formattedDate = timestamp.toISOString()
-        .replace("T", " ")
-        .replace("Z", "")
-        .replace(/-/g, "/")
-        .substring(0, 23);
-      
-      // Generate different types of log entries
-      let message;
-      const rand = Math.random();
-      
-      if (rand < 0.3) {
-        const cpuUsage = Math.floor(Math.random() * 100);
-        message = `CPU_USAGE cpu=${cpuUsage}% process=node pid=1234`;
-      } else if (rand < 0.6) {
-        const memory = Math.floor(Math.random() * 1024);
-        message = `MEMORY_USAGE memory=${memory}MB available=2048MB`;
-      } else {
-        const statusCodes = [200, 201, 400, 404, 500];
-        const statusCode = statusCodes[Math.floor(Math.random() * statusCodes.length)];
-        const endpoint = ["/api/users", "/api/data", "/api/status", "/api/logs"][Math.floor(Math.random() * 4)];
-        const time = Math.floor(Math.random() * 500);
-        message = `HTTP_REQUEST method=GET path=${endpoint} status=${statusCode} time=${time}ms`;
-      }
-      
-      lines.push(`${formattedDate} ${message}`);
-    }
-    
-    return lines.join("\n");
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {

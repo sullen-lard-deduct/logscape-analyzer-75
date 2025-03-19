@@ -79,11 +79,18 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   const [chartType, setChartType] = useState<'line' | 'bar'>('line');
   const [zoomDomain, setZoomDomain] = useState<{ start?: number, end?: number }>({});
   const containerRef = useRef<HTMLDivElement>(null);
+  const [rawLogSample, setRawLogSample] = useState<string[]>([]);
 
   useEffect(() => {
     if (!logContent || patterns.length === 0) return;
     
     try {
+      const logLines = logContent.split('\n');
+      setRawLogSample(logLines.slice(0, 10));
+      
+      console.log("Processing log data with patterns:", patterns);
+      console.log("First 5 log lines:", logLines.slice(0, 5));
+      
       processLogData(logContent, patterns);
       toast.success("Log data processed successfully");
     } catch (error) {
@@ -93,6 +100,8 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   }, [logContent, patterns]);
 
   const processLogData = (content: string, regexPatterns: RegexPattern[]) => {
+    setChartData([]);
+    
     const lines = content.split('\n');
     const parsedData: LogData[] = [];
     
@@ -105,42 +114,73 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }));
     
     setSignals(newSignals);
-    
     setPanels([{ id: 'panel-1', signals: newSignals.map(s => s.id) }]);
     
-    lines.forEach(line => {
+    let successCount = 0;
+    let failCount = 0;
+    
+    console.log(`Processing ${lines.length} log lines with ${regexPatterns.length} patterns`);
+    
+    lines.forEach((line, lineIndex) => {
+      if (!line.trim()) return;
+      
       const timestampMatch = line.match(/^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}\.\d{6})/);
       
       if (timestampMatch) {
-        const timestamp = new Date(timestampMatch[1].replace(/\//g, '-'));
-        const values: { [key: string]: number | string } = {};
-        
-        regexPatterns.forEach((pattern) => {
-          try {
-            const regex = new RegExp(pattern.pattern);
-            const match = line.match(regex);
-            
-            if (match && match[1]) {
-              const value = isNaN(Number(match[1])) ? match[1] : Number(match[1]);
-              values[pattern.name] = value;
-            }
-          } catch (error) {
-            console.error(`Error applying regex pattern "${pattern.name}":`, error);
+        try {
+          const timestampStr = timestampMatch[1];
+          const isoTimestamp = timestampStr
+            .replace(/\//g, '-')
+            .replace(' ', 'T')
+            .substring(0, 23);
+          
+          const timestamp = new Date(isoTimestamp);
+          
+          if (isNaN(timestamp.getTime())) {
+            console.warn(`Invalid timestamp at line ${lineIndex + 1}: ${timestampStr}`);
+            return;
           }
-        });
-        
-        if (Object.keys(values).length > 0) {
-          parsedData.push({ timestamp, values });
+          
+          const values: { [key: string]: number | string } = {};
+          
+          regexPatterns.forEach((pattern) => {
+            try {
+              const regex = new RegExp(pattern.pattern);
+              const match = line.match(regex);
+              
+              if (match && match[1] !== undefined) {
+                const value = isNaN(Number(match[1])) ? match[1] : Number(match[1]);
+                values[pattern.name] = value;
+                successCount++;
+              }
+            } catch (error) {
+              console.error(`Error applying regex pattern "${pattern.name}" to line: ${line}`, error);
+              failCount++;
+            }
+          });
+          
+          if (Object.keys(values).length > 0) {
+            parsedData.push({ timestamp, values });
+          }
+        } catch (error) {
+          console.error(`Error processing line ${lineIndex + 1}: ${line}`, error);
         }
+      } else if (lineIndex < 10) {
+        console.warn(`No timestamp match at line ${lineIndex + 1}: ${line}`);
       }
     });
     
-    parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-    setChartData(parsedData);
+    console.log(`Parsing complete. Success: ${successCount}, Failed: ${failCount}, Total data points: ${parsedData.length}`);
     
-    if (panels[0].signals.length === 0) {
-      setPanels([{ id: 'panel-1', signals: newSignals.map(s => s.id) }]);
+    parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+    
+    if (parsedData.length === 0) {
+      toast.warning("No matching data found with the provided patterns");
+    } else {
+      toast.success(`Found ${parsedData.length} data points with the selected patterns`);
     }
+    
+    setChartData(parsedData);
   };
 
   const handleAddPanel = () => {
@@ -223,6 +263,26 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     <div className={cn("space-y-4", className)} ref={containerRef}>
       {signals.length > 0 ? (
         <>
+          {chartData.length === 0 && (
+            <Card className="p-4 border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20">
+              <div className="flex items-start gap-2">
+                <div className="text-yellow-500">⚠️</div>
+                <div>
+                  <h3 className="font-medium">No matching data found</h3>
+                  <p className="text-sm text-muted-foreground">The regex patterns didn't match any data in the log file.</p>
+                  <div className="mt-2">
+                    <p className="text-sm font-medium">Sample log lines:</p>
+                    <div className="mt-1 p-2 bg-black/5 rounded text-xs font-mono overflow-x-auto max-h-40">
+                      {rawLogSample.map((line, i) => (
+                        <div key={i} className="whitespace-nowrap">{line}</div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          )}
+        
           <div className="flex justify-between items-center">
             <h3 className="text-lg font-medium">Signal Visualization</h3>
             <div className="flex items-center gap-2">
