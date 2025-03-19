@@ -72,7 +72,7 @@ const Index = () => {
             <CardHeader>
               <CardTitle>Upload Log File</CardTitle>
               <CardDescription>
-                Upload a log file (.log or .txt) or a compressed archive containing log files.
+                Upload a log file (.log or .txt) to analyze patterns and visualize data.
               </CardDescription>
             </CardHeader>
             <CardContent>

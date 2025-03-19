@@ -1,6 +1,7 @@
+
 import React, { useState, useRef } from "react";
 import { toast } from "sonner";
-import { Upload, X, FileArchive, FileText, LoaderCircle } from "lucide-react";
+import { Upload, X, FileText, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
@@ -11,7 +12,7 @@ interface FileUploaderProps {
 }
 
 type UploadStatus = "idle" | "uploading" | "processing" | "error" | "success";
-type ProcessStep = "uploading" | "validating" | "extracting" | "analyzing";
+type ProcessStep = "uploading" | "validating" | "analyzing";
 
 const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className }) => {
   const [file, setFile] = useState<File | null>(null);
@@ -19,13 +20,6 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState<ProcessStep>("uploading");
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const isCompressedFile = (file: File): boolean => {
-    const compressedExtensions = [".zip", ".tar", ".gz", ".7z", ".rar"];
-    return compressedExtensions.some(ext => 
-      file.name.toLowerCase().endsWith(ext)
-    );
-  };
 
   const isLogFile = (fileName: string): boolean => {
     const logExtensions = [".log", ".txt"];
@@ -78,19 +72,9 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
       setCurrentStep("validating");
       await new Promise(r => setTimeout(r, 500));
       
-      // Check if file is a compressed archive
-      if (!isCompressedFile(file) && !isLogFile(file.name)) {
-        throw new Error("Please upload a log file (.log/.txt) or a compressed archive");
-      }
-      
-      if (isCompressedFile(file)) {
-        setCurrentStep("extracting");
-        await new Promise(r => setTimeout(r, 800));
-        
-        // In a real app with a backend, we would extract the archive here
-        // For this front-end demo, we'll just simulate it
-        toast.warning("Compressed file extraction is simulated in this demo");
-        throw new Error("For this demo, please upload a .log or .txt file directly");
+      // Check if file is a valid log file
+      if (!isLogFile(file.name)) {
+        throw new Error("Please upload a log file (.log or .txt)");
       }
       
       setCurrentStep("analyzing");
@@ -140,7 +124,6 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
     switch (currentStep) {
       case "uploading": return "Uploading file...";
       case "validating": return "Validating file format...";
-      case "extracting": return "Extracting archive...";
       case "analyzing": return "Analyzing log data...";
       default: return "Processing...";
     }
@@ -162,14 +145,14 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
             onChange={handleFileChange}
             className="hidden"
             ref={fileInputRef}
-            accept=".log,.txt,.zip,.tar,.gz,.7z,.rar"
+            accept=".log,.txt"
           />
           <div className="w-16 h-16 mb-4 rounded-full bg-primary/10 flex items-center justify-center">
             <Upload className="h-8 w-8 text-primary" />
           </div>
           <h3 className="text-lg font-medium mb-2">Upload your log file</h3>
           <p className="text-muted-foreground mb-4 text-sm max-w-md mx-auto">
-            Drag & drop your .log/.txt file or compressed archive (.zip, .tar, .gz, etc.)
+            Drag & drop your .log or .txt file
           </p>
           <Button variant="outline" size="sm" className="group">
             <Upload className="mr-2 h-4 w-4 group-hover:translate-y-[-2px] transition-transform" />
@@ -180,11 +163,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
         <div className="border rounded-lg p-6 animate-scale-in">
           <div className="flex justify-between items-center mb-4">
             <div className="flex items-center gap-3">
-              {isCompressedFile(file!) ? (
-                <FileArchive className="h-8 w-8 text-primary" />
-              ) : (
-                <FileText className="h-8 w-8 text-primary" />
-              )}
+              <FileText className="h-8 w-8 text-primary" />
               <div className="overflow-hidden">
                 <p className="font-medium truncate max-w-[200px] sm:max-w-[300px]">
                   {file?.name}
