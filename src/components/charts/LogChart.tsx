@@ -1,15 +1,16 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { toast } from "sonner";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, 
-  Legend, ResponsiveContainer, Brush, ReferenceLine
+  Legend, ResponsiveContainer, Brush, ReferenceLine, BarChart, Bar
 } from 'recharts';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
-  Split, Maximize, X, Plus, 
+  Split, Maximize, X, Plus, RefreshCcw,
   ZoomIn, LineChart as LineChartIcon, BarChart as BarChartIcon
 } from 'lucide-react';
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -62,7 +63,9 @@ const CustomTooltip = ({ active, payload, label }: any) => {
           <div key={`tooltip-${index}`} className="flex items-center gap-2 py-0.5">
             <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
             <span className="font-medium">{entry.name}:</span>
-            <span>{entry.value}</span>
+            <span>{typeof entry.payload[entry.name] === 'string' 
+              ? entry.payload[entry.name] 
+              : entry.value}</span>
           </div>
         ))}
       </div>
@@ -73,6 +76,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) => {
   const [chartData, setChartData] = useState<LogData[]>([]);
+  const [formattedChartData, setFormattedChartData] = useState<any[]>([]);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [panels, setPanels] = useState<ChartPanel[]>([{ id: 'panel-1', signals: [] }]);
   const [activeTab, setActiveTab] = useState<string>("panel-1");
@@ -80,6 +84,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   const [zoomDomain, setZoomDomain] = useState<{ start?: number, end?: number }>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const [rawLogSample, setRawLogSample] = useState<string[]>([]);
+  const [stringValueMap, setStringValueMap] = useState<Record<string, Record<string, number>>>({});
 
   useEffect(() => {
     if (!logContent || patterns.length === 0) return;
@@ -98,6 +103,41 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       toast.error("Error processing log data");
     }
   }, [logContent, patterns]);
+
+  useEffect(() => {
+    if (chartData.length > 0) {
+      formatChartData();
+    }
+  }, [chartData, stringValueMap]);
+
+  const formatChartData = () => {
+    const formattedData = chartData.map(item => {
+      const dataPoint: any = {
+        timestamp: item.timestamp.getTime(),
+      };
+
+      // Process each value, converting strings to their numeric equivalents
+      Object.entries(item.values).forEach(([key, value]) => {
+        if (typeof value === 'string') {
+          // If this is a string value, use its numeric mapping
+          if (!stringValueMap[key]) {
+            // This should never happen as we've already processed all string values
+            dataPoint[key] = 0;
+          } else {
+            dataPoint[key] = stringValueMap[key][value];
+            // Also store the original string value for tooltip display
+            dataPoint[`${key}_original`] = value;
+          }
+        } else {
+          dataPoint[key] = value;
+        }
+      });
+
+      return dataPoint;
+    });
+
+    setFormattedChartData(formattedData);
+  };
 
   const processLogData = (content: string, regexPatterns: RegexPattern[]) => {
     setChartData([]);
@@ -120,6 +160,9 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     let failCount = 0;
     
     console.log(`Processing ${lines.length} log lines with ${regexPatterns.length} patterns`);
+    
+    // Track unique string values for each signal
+    const stringValues: Record<string, Set<string>> = {};
     
     lines.forEach((line, lineIndex) => {
       if (!line.trim()) return;
@@ -151,6 +194,15 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
               if (match && match[1] !== undefined) {
                 const value = isNaN(Number(match[1])) ? match[1] : Number(match[1]);
                 values[pattern.name] = value;
+                
+                // If string value, track it for numeric mapping
+                if (typeof value === 'string') {
+                  if (!stringValues[pattern.name]) {
+                    stringValues[pattern.name] = new Set<string>();
+                  }
+                  stringValues[pattern.name].add(value);
+                }
+                
                 successCount++;
               }
             } catch (error) {
@@ -173,6 +225,18 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     console.log(`Parsing complete. Success: ${successCount}, Failed: ${failCount}, Total data points: ${parsedData.length}`);
     
     parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+    
+    // Create numeric mappings for string values
+    const newStringValueMap: Record<string, Record<string, number>> = {};
+    
+    Object.entries(stringValues).forEach(([key, valueSet]) => {
+      newStringValueMap[key] = {};
+      Array.from(valueSet).sort().forEach((value, index) => {
+        newStringValueMap[key][value] = index + 1; // Start from 1 to avoid zero values
+      });
+    });
+    
+    setStringValueMap(newStringValueMap);
     
     if (parsedData.length === 0) {
       toast.warning("No matching data found with the provided patterns");
@@ -250,13 +314,17 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     );
   };
 
-  const getFormattedChartData = () => {
-    return chartData.map(item => ({
-      timestamp: item.timestamp.getTime(),
-      ...Object.fromEntries(
-        Object.entries(item.values).map(([key, value]) => [key, value])
-      )
-    }));
+  const handleResetAll = () => {
+    setChartData([]);
+    setFormattedChartData([]);
+    setSignals([]);
+    setPanels([{ id: 'panel-1', signals: [] }]);
+    setActiveTab("panel-1");
+    setChartType('line');
+    setZoomDomain({});
+    setStringValueMap({});
+    setRawLogSample([]);
+    toast.success("Reset all data and settings");
   };
 
   return (
@@ -286,6 +354,15 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
           <div className="flex justify-between items-center">
             <h3 className="text-lg font-medium">Signal Visualization</h3>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleResetAll}
+                className="h-8"
+              >
+                <RefreshCcw className="h-4 w-4 mr-1" />
+                Reset All
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -426,55 +503,103 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                         </div>
                       ) : (
                         <ResponsiveContainer width="100%" height="100%">
-                          <LineChart
-                            data={getFormattedChartData()}
-                            margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
-                          >
-                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                            <XAxis 
-                              dataKey="timestamp" 
-                              tickFormatter={formatXAxis}
-                              type="number"
-                              domain={zoomDomain.start && zoomDomain.end ? 
-                                [zoomDomain.start, zoomDomain.end] : 
-                                ['dataMin', 'dataMax']}
-                              scale="time"
-                              tick={{ fontSize: 12 }}
-                            />
-                            <YAxis tick={{ fontSize: 12 }} />
-                            <RechartsTooltip content={<CustomTooltip />} />
-                            <Legend verticalAlign="top" height={36} />
-                            
-                            {getPanelSignals(panel.id).map((signal) => (
-                              <Line
-                                key={signal.id}
-                                name={signal.name}
-                                type="monotone"
-                                dataKey={signal.name}
-                                stroke={signal.color}
-                                activeDot={{ r: 5, onClick: (e) => console.log(e) }}
-                                strokeWidth={2}
-                                dot={false}
-                                animationDuration={500}
+                          {chartType === 'line' ? (
+                            <LineChart
+                              data={formattedChartData}
+                              margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                              <XAxis 
+                                dataKey="timestamp" 
+                                tickFormatter={formatXAxis}
+                                type="number"
+                                domain={zoomDomain.start && zoomDomain.end ? 
+                                  [zoomDomain.start, zoomDomain.end] : 
+                                  ['dataMin', 'dataMax']}
+                                scale="time"
+                                tick={{ fontSize: 12 }}
                               />
-                            ))}
-                            
-                            <Brush 
-                              dataKey="timestamp" 
-                              height={40} 
-                              stroke="hsl(var(--primary))"
-                              fill="hsla(var(--primary), 0.1)"
-                              onChange={(e) => {
-                                if (e.startIndex !== undefined && e.endIndex !== undefined) {
-                                  const data = getFormattedChartData();
-                                  setZoomDomain({
-                                    start: data[e.startIndex]?.timestamp,
-                                    end: data[e.endIndex]?.timestamp
-                                  });
-                                }
-                              }}
-                            />
-                          </LineChart>
+                              <YAxis tick={{ fontSize: 12 }} />
+                              <RechartsTooltip content={<CustomTooltip />} />
+                              <Legend verticalAlign="top" height={36} />
+                              
+                              {getPanelSignals(panel.id).map((signal) => (
+                                <Line
+                                  key={signal.id}
+                                  name={signal.name}
+                                  type="stepAfter"
+                                  dataKey={signal.name}
+                                  stroke={signal.color}
+                                  activeDot={{ r: 5 }}
+                                  strokeWidth={2}
+                                  dot={false}
+                                  animationDuration={500}
+                                />
+                              ))}
+                              
+                              <Brush 
+                                dataKey="timestamp" 
+                                height={40} 
+                                stroke="hsl(var(--primary))"
+                                fill="hsla(var(--primary), 0.1)"
+                                onChange={(e) => {
+                                  if (e.startIndex !== undefined && e.endIndex !== undefined) {
+                                    const data = formattedChartData;
+                                    setZoomDomain({
+                                      start: data[e.startIndex]?.timestamp,
+                                      end: data[e.endIndex]?.timestamp
+                                    });
+                                  }
+                                }}
+                              />
+                            </LineChart>
+                          ) : (
+                            <BarChart
+                              data={formattedChartData}
+                              margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                              <XAxis 
+                                dataKey="timestamp" 
+                                tickFormatter={formatXAxis}
+                                type="number"
+                                domain={zoomDomain.start && zoomDomain.end ? 
+                                  [zoomDomain.start, zoomDomain.end] : 
+                                  ['dataMin', 'dataMax']}
+                                scale="time"
+                                tick={{ fontSize: 12 }}
+                              />
+                              <YAxis tick={{ fontSize: 12 }} />
+                              <RechartsTooltip content={<CustomTooltip />} />
+                              <Legend verticalAlign="top" height={36} />
+                              
+                              {getPanelSignals(panel.id).map((signal) => (
+                                <Bar
+                                  key={signal.id}
+                                  name={signal.name}
+                                  dataKey={signal.name}
+                                  fill={signal.color}
+                                  animationDuration={500}
+                                />
+                              ))}
+                              
+                              <Brush 
+                                dataKey="timestamp" 
+                                height={40} 
+                                stroke="hsl(var(--primary))"
+                                fill="hsla(var(--primary), 0.1)"
+                                onChange={(e) => {
+                                  if (e.startIndex !== undefined && e.endIndex !== undefined) {
+                                    const data = formattedChartData;
+                                    setZoomDomain({
+                                      start: data[e.startIndex]?.timestamp,
+                                      end: data[e.endIndex]?.timestamp
+                                    });
+                                  }
+                                }}
+                              />
+                            </BarChart>
+                          )}
                         </ResponsiveContainer>
                       )}
                     </TabsContent>

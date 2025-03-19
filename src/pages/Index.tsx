@@ -1,7 +1,7 @@
 
 import React, { useState } from "react";
 import { toast } from "sonner";
-import { FileText, Wand } from "lucide-react";
+import { FileText, Wand, RefreshCcw } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
 import FileUploader from "@/components/upload/FileUploader";
 import RegexManager, { RegexPattern } from "@/components/regex/RegexManager";
@@ -26,6 +26,13 @@ const Index = () => {
     setActiveTab("analysis");
   };
 
+  const handleResetAll = () => {
+    setLogContent("");
+    setSelectedPatterns([]);
+    setActiveTab("upload");
+    toast.success("All data has been reset");
+  };
+
   return (
     <AppLayout>
       <div className="mb-8 text-center max-w-3xl mx-auto">
@@ -41,6 +48,17 @@ const Index = () => {
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
           Analyze and visualize your log files with ease. Upload logs, define patterns, and gain insights through interactive visualizations.
         </p>
+        <div className="mt-4">
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={handleResetAll}
+            className="gap-2"
+          >
+            <RefreshCcw className="h-4 w-4" />
+            Reset All
+          </Button>
+        </div>
       </div>
 
       <Tabs defaultValue="upload" value={activeTab} onValueChange={setActiveTab} className="space-y-8">
