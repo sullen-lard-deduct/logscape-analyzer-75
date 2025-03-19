@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { toast } from "sonner";
 import {
@@ -10,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
-  SplitVertical, ArrowsExpand, X, Plus, 
+  Split, Maximize, X, Plus, 
   ZoomIn, LineChart as LineChartIcon, BarChart as BarChartIcon
 } from 'lucide-react';
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -41,7 +40,6 @@ interface LogChartProps {
   className?: string;
 }
 
-// Generate a set of pleasant colors for lines
 const CHART_COLORS = [
   '#3B82F6', // blue
   '#10B981', // emerald
@@ -55,7 +53,6 @@ const CHART_COLORS = [
   '#0EA5E9', // sky
 ];
 
-// Custom tooltip formatter for the chart
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     return (
@@ -83,7 +80,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   const [zoomDomain, setZoomDomain] = useState<{ start?: number, end?: number }>({});
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Process log data whenever log content or patterns change
   useEffect(() => {
     if (!logContent || patterns.length === 0) return;
     
@@ -100,7 +96,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     const lines = content.split('\n');
     const parsedData: LogData[] = [];
     
-    // Create signals from patterns
     const newSignals: Signal[] = regexPatterns.map((pattern, index) => ({
       id: `signal-${Date.now()}-${index}`,
       name: pattern.name,
@@ -111,26 +106,21 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     
     setSignals(newSignals);
     
-    // Add all signals to the first panel
     setPanels([{ id: 'panel-1', signals: newSignals.map(s => s.id) }]);
     
-    // Process each line
     lines.forEach(line => {
-      // Extract timestamp using a regex (YYYY/MM/DD HH:mm:ss.SSSSSS)
       const timestampMatch = line.match(/^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}\.\d{6})/);
       
       if (timestampMatch) {
         const timestamp = new Date(timestampMatch[1].replace(/\//g, '-'));
         const values: { [key: string]: number | string } = {};
         
-        // Apply each regex pattern to extract values
         regexPatterns.forEach((pattern) => {
           try {
             const regex = new RegExp(pattern.pattern);
             const match = line.match(regex);
             
             if (match && match[1]) {
-              // Try to convert to number if possible
               const value = isNaN(Number(match[1])) ? match[1] : Number(match[1]);
               values[pattern.name] = value;
             }
@@ -139,18 +129,15 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
           }
         });
         
-        // Only add data point if at least one value was extracted
         if (Object.keys(values).length > 0) {
           parsedData.push({ timestamp, values });
         }
       }
     });
     
-    // Sort data by timestamp
     parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     setChartData(parsedData);
     
-    // If we have a panel but no signals in it, add all signals
     if (panels[0].signals.length === 0) {
       setPanels([{ id: 'panel-1', signals: newSignals.map(s => s.id) }]);
     }
@@ -171,7 +158,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     const updatedPanels = panels.filter(panel => panel.id !== panelId);
     setPanels(updatedPanels);
     
-    // Set active tab to first panel if we removed the active one
     if (activeTab === panelId) {
       setActiveTab(updatedPanels[0].id);
     }
@@ -180,7 +166,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   const handleAddSignalToPanel = (panelId: string, signalId: string) => {
     setPanels(panels.map(panel => {
       if (panel.id === panelId) {
-        // Only add if not already in panel
         if (!panel.signals.includes(signalId)) {
           return { ...panel, signals: [...panel.signals, signalId] };
         }
@@ -216,7 +201,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
   };
 
-  // Find signals for a specific panel
   const getPanelSignals = (panelId: string) => {
     const panel = panels.find(p => p.id === panelId);
     if (!panel) return [];
@@ -226,7 +210,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     );
   };
 
-  // Format chart data for recharts
   const getFormattedChartData = () => {
     return chartData.map(item => ({
       timestamp: item.timestamp.getTime(),
@@ -249,7 +232,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                 onClick={handleZoomReset}
                 className="h-8"
               >
-                <ArrowsExpand className="h-4 w-4 mr-1" />
+                <Maximize className="h-4 w-4 mr-1" />
                 Reset Zoom
               </Button>
               <Select 
@@ -316,7 +299,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                             onValueChange={(value) => handleAddSignalToPanel(value, signal.id)}
                           >
                             <SelectTrigger className="h-6 w-6 p-0">
-                              <SplitVertical className="h-3 w-3" />
+                              <Split className="h-3 w-3" />
                             </SelectTrigger>
                             <SelectContent>
                               {panels.map((panel) => (
