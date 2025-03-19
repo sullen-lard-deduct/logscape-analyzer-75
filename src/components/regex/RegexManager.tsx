@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { PlusCircle, Save, Trash2, Check, X, Edit, Play } from "lucide-react";
+import { PlusCircle, Save, Trash2, Check, X, Edit, Play, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import PatternForm from "./PatternForm";
 
 export interface RegexPattern {
   id: string;
@@ -85,13 +86,16 @@ const RegexManager: React.FC<RegexManagerProps> = ({ onApplyPattern, logSample }
 
   const handleSavePattern = (name: string, pattern: string, description: string, id?: string) => {
     try {
+      // Convert Python-style named capturing groups (?P<name>...) to standard capturing groups (...)
+      const normalizedPattern = pattern.replace(/\(\?P<[^>]+>([^)]+)\)/g, '($1)');
+      
       // Validate the regex by creating a RegExp object
-      new RegExp(pattern);
+      new RegExp(normalizedPattern);
       
       if (id) {
         // Update existing pattern
         setPatterns(patterns.map(p => 
-          p.id === id ? { ...p, name, pattern, description } : p
+          p.id === id ? { ...p, name, pattern: normalizedPattern, description } : p
         ));
         toast.success("Pattern updated successfully");
       } else {
@@ -99,7 +103,7 @@ const RegexManager: React.FC<RegexManagerProps> = ({ onApplyPattern, logSample }
         const newPattern: RegexPattern = {
           id: Date.now().toString(),
           name,
-          pattern,
+          pattern: normalizedPattern,
           description
         };
         setPatterns([...patterns, newPattern]);
@@ -108,7 +112,7 @@ const RegexManager: React.FC<RegexManagerProps> = ({ onApplyPattern, logSample }
       setNewPatternOpen(false);
       setEditingPattern(null);
     } catch (error) {
-      toast.error("Invalid regular expression");
+      toast.error("Invalid regular expression. Please check your syntax.");
     }
   };
 
@@ -143,21 +147,22 @@ const RegexManager: React.FC<RegexManagerProps> = ({ onApplyPattern, logSample }
     }
 
     try {
-      const regex = new RegExp(pattern.pattern, "g");
+      // Convert Python-style named capturing groups if present
+      const normalizedPattern = pattern.pattern.replace(/\(\?P<[^>]+>([^)]+)\)/g, '($1)');
+      
+      const regex = new RegExp(normalizedPattern, "g");
       const lines = logSample.split("\n");
       const results: string[] = [];
 
       // Process up to 10 matches for preview
       let matchCount = 0;
       for (const line of lines) {
+        regex.lastIndex = 0; // Reset regex before each test
         const match = regex.exec(line);
         if (match && match[1]) {
           results.push(`${match[1]} (from: ${line.substring(0, 60)}...)`);
           matchCount++;
           if (matchCount >= 10) break;
-          
-          // Reset regex for next iteration
-          regex.lastIndex = 0;
         }
       }
 
@@ -165,7 +170,7 @@ const RegexManager: React.FC<RegexManagerProps> = ({ onApplyPattern, logSample }
       setTestPattern(pattern);
       setTestDialogOpen(true);
     } catch (error) {
-      toast.error("Error testing pattern");
+      toast.error("Error testing pattern: " + (error instanceof Error ? error.message : "Invalid regex"));
     }
   };
 
@@ -346,72 +351,6 @@ const RegexManager: React.FC<RegexManagerProps> = ({ onApplyPattern, logSample }
         </Dialog>
       </CardContent>
     </Card>
-  );
-};
-
-interface PatternFormProps {
-  onSave: (name: string, pattern: string, description: string, id?: string) => void;
-  pattern?: RegexPattern | null;
-  onCancel: () => void;
-}
-
-const PatternForm: React.FC<PatternFormProps> = ({ onSave, pattern, onCancel }) => {
-  const [name, setName] = useState(pattern?.name || "");
-  const [regexPattern, setRegexPattern] = useState(pattern?.pattern || "");
-  const [description, setDescription] = useState(pattern?.description || "");
-
-  return (
-    <div className="space-y-4 py-4">
-      <div className="space-y-2">
-        <Label htmlFor="name">Name</Label>
-        <Input
-          id="name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="CPU Usage"
-        />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="pattern">
-          Regular Expression
-          <Badge variant="outline" className="ml-2 font-mono text-xs">
-            (Use capturing groups)
-          </Badge>
-        </Label>
-        <Input
-          id="pattern"
-          value={regexPattern}
-          onChange={(e) => setRegexPattern(e.target.value)}
-          placeholder="CPU: (\d+)%"
-          className="font-mono"
-        />
-        <p className="text-xs text-muted-foreground">
-          Use parentheses to define capturing groups. The first group will be used as the value.
-        </p>
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="description">Description (optional)</Label>
-        <Textarea
-          id="description"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Extracts CPU usage percentage from logs"
-          rows={2}
-        />
-      </div>
-      <DialogFooter>
-        <Button variant="outline" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button
-          onClick={() => onSave(name, regexPattern, description, pattern?.id)}
-          disabled={!name || !regexPattern}
-        >
-          <Save className="h-4 w-4 mr-2" />
-          Save Pattern
-        </Button>
-      </DialogFooter>
-    </div>
   );
 };
 
