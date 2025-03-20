@@ -54,8 +54,9 @@ const CHART_COLORS = [
   '#0EA5E9', // sky
 ];
 
-// Sampling constant for large datasets
+// Sampling constants for large datasets
 const MAX_CHART_POINTS = 2000;
+const MAX_VISIBLE_POINTS = 500;
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
@@ -88,9 +89,13 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   const [zoomDomain, setZoomDomain] = useState<{ start?: number, end?: number }>({});
   const [dataStats, setDataStats] = useState<{ total: number, displayed: number }>({ total: 0, displayed: 0 });
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [processingStatus, setProcessingStatus] = useState<string>("");
   const containerRef = useRef<HTMLDivElement>(null);
   const [rawLogSample, setRawLogSample] = useState<string[]>([]);
   const [stringValueMap, setStringValueMap] = useState<Record<string, Record<string, number>>>({});
+  
+  // Memoize the chart data to improve performance
+  const memoizedChartData = useMemo(() => displayedChartData, [displayedChartData]);
 
   // Process log data in chunks using a worker
   useEffect(() => {
@@ -98,6 +103,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     
     try {
       setIsProcessing(true);
+      setProcessingStatus("Starting to process log data");
       const logLines = logContent.split('\n');
       setRawLogSample(logLines.slice(0, 10));
       
@@ -117,24 +123,38 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   // Create a sampled version of the data for display when data is large
   useEffect(() => {
     if (formattedChartData.length > 0) {
-      const total = formattedChartData.length;
-      let sampled;
+      setProcessingStatus("Preparing chart data for display");
       
-      if (total > MAX_CHART_POINTS) {
-        // For large datasets, use sampling to reduce points
-        const samplingRate = Math.ceil(total / MAX_CHART_POINTS);
-        sampled = formattedChartData.filter((_, i) => i % samplingRate === 0);
-        
-        console.log(`Sampled data from ${total} to ${sampled.length} points (rate: 1/${samplingRate})`);
-        setDataStats({ total, displayed: sampled.length });
-        
-        toast.info(`Displaying ${sampled.length.toLocaleString()} of ${total.toLocaleString()} data points for performance reasons`);
-      } else {
-        sampled = formattedChartData;
-        setDataStats({ total, displayed: total });
-      }
-      
-      setDisplayedChartData(sampled);
+      // Use setTimeout to prevent UI freezing
+      setTimeout(() => {
+        try {
+          const total = formattedChartData.length;
+          let sampled;
+          
+          if (total > MAX_CHART_POINTS) {
+            // For large datasets, use sampling to reduce points
+            const samplingRate = Math.ceil(total / MAX_CHART_POINTS);
+            sampled = formattedChartData.filter((_, i) => i % samplingRate === 0);
+            
+            console.log(`Sampled data from ${total} to ${sampled.length} points (rate: 1/${samplingRate})`);
+            setDataStats({ total, displayed: sampled.length });
+            
+            toast.info(`Displaying ${sampled.length.toLocaleString()} of ${total.toLocaleString()} data points for performance`);
+          } else {
+            sampled = formattedChartData;
+            setDataStats({ total, displayed: total });
+          }
+          
+          setDisplayedChartData(sampled);
+          setProcessingStatus("");
+          setIsProcessing(false);
+        } catch (error) {
+          console.error("Error preparing chart data:", error);
+          toast.error("Error preparing chart data");
+          setIsProcessing(false);
+          setProcessingStatus("");
+        }
+      }, 100);
     }
   }, [formattedChartData]);
 
@@ -169,7 +189,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
 
   // Break the processing into chunks to prevent UI freezing
   const processLogDataInChunks = useCallback((content: string, regexPatterns: RegexPattern[]) => {
-    const CHUNK_SIZE = 1000; // Number of lines to process in each chunk
+    const CHUNK_SIZE = 5000; // Increased chunk size for faster processing
     const lines = content.split('\n');
     const totalLines = lines.length;
     const chunks = Math.ceil(totalLines / CHUNK_SIZE);
@@ -202,6 +222,8 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         finalizeProcessing(parsedData, stringValues);
         return;
       }
+      
+      setProcessingStatus(`Processing chunk ${currentChunk + 1} of ${chunks} (${Math.round(((currentChunk + 1) / chunks) * 100)}%)`);
       
       const startIdx = currentChunk * CHUNK_SIZE;
       const endIdx = Math.min((currentChunk + 1) * CHUNK_SIZE, totalLines);
@@ -286,35 +308,77 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     
     // Finalize the processing after all chunks are done
     const finalizeProcessing = (parsedData: LogData[], stringValues: Record<string, Set<string>>) => {
-      parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+      setProcessingStatus("Finalizing data processing");
       
-      // Create numeric mappings for string values
-      const newStringValueMap: Record<string, Record<string, number>> = {};
-      
-      Object.entries(stringValues).forEach(([key, valueSet]) => {
-        newStringValueMap[key] = {};
-        Array.from(valueSet).sort().forEach((value, index) => {
-          newStringValueMap[key][value] = index + 1; // Start from 1 to avoid zero values
-        });
-      });
-      
-      setStringValueMap(newStringValueMap);
-      
-      if (parsedData.length === 0) {
-        toast.warning("No matching data found with the provided patterns");
-      } else {
-        toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
-      }
-      
-      setChartData(parsedData);
-      const formatted = formatChartData(parsedData);
-      setFormattedChartData(formatted);
-      setIsProcessing(false);
+      // Use setTimeout to prevent UI freeze
+      setTimeout(() => {
+        try {
+          parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+          
+          // Create numeric mappings for string values
+          const newStringValueMap: Record<string, Record<string, number>> = {};
+          
+          Object.entries(stringValues).forEach(([key, valueSet]) => {
+            newStringValueMap[key] = {};
+            Array.from(valueSet).sort().forEach((value, index) => {
+              newStringValueMap[key][value] = index + 1; // Start from 1 to avoid zero values
+            });
+          });
+          
+          setStringValueMap(newStringValueMap);
+          
+          if (parsedData.length === 0) {
+            toast.warning("No matching data found with the provided patterns");
+            setIsProcessing(false);
+          } else {
+            toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
+            setProcessingStatus("Formatting data for display");
+            
+            // Set chart data in a separate tick to avoid UI freeze
+            setChartData(parsedData);
+            
+            // Schedule formatting in a separate tick
+            setTimeout(() => {
+              const formatted = formatChartData(parsedData);
+              setFormattedChartData(formatted);
+            }, 100);
+          }
+        } catch (error) {
+          console.error("Error finalizing data:", error);
+          toast.error("Error finalizing data");
+          setIsProcessing(false);
+          setProcessingStatus("");
+        }
+      }, 0);
     };
     
     // Start processing the first chunk
     processChunk();
   }, [formatChartData]);
+
+  // Calculate visible data based on zoom domain
+  const getVisibleData = useCallback(() => {
+    if (!zoomDomain.start || !zoomDomain.end) {
+      // If no zoom is applied, return the displayed chart data
+      return memoizedChartData;
+    }
+    
+    // Filter data to show only the zoomed range
+    const visibleData = memoizedChartData.filter(
+      (item) => item.timestamp >= zoomDomain.start! && item.timestamp <= zoomDomain.end!
+    );
+    
+    // Apply additional sampling if the zoomed range still has too many points
+    if (visibleData.length > MAX_VISIBLE_POINTS) {
+      const samplingRate = Math.ceil(visibleData.length / MAX_VISIBLE_POINTS);
+      return visibleData.filter((_, i) => i % samplingRate === 0);
+    }
+    
+    return visibleData;
+  }, [memoizedChartData, zoomDomain]);
+
+  // Memoize the visible data to improve performance
+  const visibleChartData = useMemo(() => getVisibleData(), [getVisibleData]);
 
   const handleAddPanel = useCallback(() => {
     const newPanelId = `panel-${panels.length + 1}`;
@@ -386,6 +450,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   const handleResetAll = useCallback(() => {
     setChartData([]);
     setFormattedChartData([]);
+    setDisplayedChartData([]);
     setSignals([]);
     setPanels([{ id: 'panel-1', signals: [] }]);
     setActiveTab("panel-1");
@@ -397,6 +462,116 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     toast.success("Reset all data and settings");
   }, []);
 
+  // Memoize the line chart component to improve performance
+  const renderLineChart = useCallback((panelId: string) => {
+    const panelSignals = getPanelSignals(panelId);
+    
+    return (
+      <LineChart
+        data={visibleChartData}
+        margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+      >
+        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+        <XAxis 
+          dataKey="timestamp" 
+          tickFormatter={formatXAxis}
+          type="number"
+          domain={zoomDomain.start && zoomDomain.end ? 
+            [zoomDomain.start, zoomDomain.end] : 
+            ['dataMin', 'dataMax']}
+          scale="time"
+          tick={{ fontSize: 12 }}
+        />
+        <YAxis tick={{ fontSize: 12 }} />
+        <RechartsTooltip content={<CustomTooltip />} />
+        <Legend verticalAlign="top" height={36} />
+        
+        {panelSignals.map((signal) => (
+          <Line
+            key={signal.id}
+            name={signal.name}
+            type="stepAfter"
+            dataKey={signal.name}
+            stroke={signal.color}
+            activeDot={{ r: 5 }}
+            strokeWidth={2}
+            dot={false}
+            isAnimationActive={false} // Disable animation for better performance
+          />
+        ))}
+        
+        <Brush 
+          dataKey="timestamp" 
+          height={40} 
+          stroke="hsl(var(--primary))"
+          fill="hsla(var(--primary), 0.1)"
+          onChange={(e) => {
+            if (e.startIndex !== undefined && e.endIndex !== undefined && formattedChartData.length > 0) {
+              const data = formattedChartData;
+              setZoomDomain({
+                start: data[e.startIndex]?.timestamp,
+                end: data[e.endIndex]?.timestamp
+              });
+            }
+          }}
+        />
+      </LineChart>
+    );
+  }, [visibleChartData, zoomDomain, formatXAxis, getPanelSignals, formattedChartData]);
+
+  // Memoize the bar chart component to improve performance
+  const renderBarChart = useCallback((panelId: string) => {
+    const panelSignals = getPanelSignals(panelId);
+    
+    return (
+      <BarChart
+        data={visibleChartData}
+        margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+      >
+        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+        <XAxis 
+          dataKey="timestamp" 
+          tickFormatter={formatXAxis}
+          type="number"
+          domain={zoomDomain.start && zoomDomain.end ? 
+            [zoomDomain.start, zoomDomain.end] : 
+            ['dataMin', 'dataMax']}
+          scale="time"
+          tick={{ fontSize: 12 }}
+        />
+        <YAxis tick={{ fontSize: 12 }} />
+        <RechartsTooltip content={<CustomTooltip />} />
+        <Legend verticalAlign="top" height={36} />
+        
+        {panelSignals.map((signal) => (
+          <Bar
+            key={signal.id}
+            name={signal.name}
+            dataKey={signal.name}
+            fill={signal.color}
+            isAnimationActive={false} // Disable animation for better performance
+          />
+        ))}
+        
+        <Brush 
+          dataKey="timestamp" 
+          height={40} 
+          stroke="hsl(var(--primary))"
+          fill="hsla(var(--primary), 0.1)"
+          onChange={(e) => {
+            if (e.startIndex !== undefined && e.endIndex !== undefined && formattedChartData.length > 0) {
+              const data = formattedChartData;
+              setZoomDomain({
+                start: data[e.startIndex]?.timestamp,
+                end: data[e.endIndex]?.timestamp
+              });
+            }
+          }}
+        />
+      </BarChart>
+    );
+  }, [visibleChartData, zoomDomain, formatXAxis, getPanelSignals, formattedChartData]);
+
   return (
     <div className={cn("space-y-4", className)} ref={containerRef}>
       {signals.length > 0 ? (
@@ -406,9 +581,9 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
               <div className="flex items-start gap-2">
                 <div className="text-blue-500">⏳</div>
                 <div>
-                  <h3 className="font-medium">Processing large log file</h3>
+                  <h3 className="font-medium">Processing log data</h3>
                   <p className="text-sm text-muted-foreground">
-                    This may take a few moments, please wait...
+                    {processingStatus || "This may take a few moments, please wait..."}
                   </p>
                 </div>
               </div>
@@ -591,105 +766,30 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                           </div>
                         </div>
                       ) : (
-                        <ResponsiveContainer width="100%" height="100%">
-                          {chartType === 'line' ? (
-                            <LineChart
-                              data={formattedChartData}
-                              margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
-                            >
-                              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                              <XAxis 
-                                dataKey="timestamp" 
-                                tickFormatter={formatXAxis}
-                                type="number"
-                                domain={zoomDomain.start && zoomDomain.end ? 
-                                  [zoomDomain.start, zoomDomain.end] : 
-                                  ['dataMin', 'dataMax']}
-                                scale="time"
-                                tick={{ fontSize: 12 }}
-                              />
-                              <YAxis tick={{ fontSize: 12 }} />
-                              <RechartsTooltip content={<CustomTooltip />} />
-                              <Legend verticalAlign="top" height={36} />
-                              
-                              {getPanelSignals(panel.id).map((signal) => (
-                                <Line
-                                  key={signal.id}
-                                  name={signal.name}
-                                  type="stepAfter"
-                                  dataKey={signal.name}
-                                  stroke={signal.color}
-                                  activeDot={{ r: 5 }}
-                                  strokeWidth={2}
-                                  dot={false}
-                                  animationDuration={500}
-                                />
-                              ))}
-                              
-                              <Brush 
-                                dataKey="timestamp" 
-                                height={40} 
-                                stroke="hsl(var(--primary))"
-                                fill="hsla(var(--primary), 0.1)"
-                                onChange={(e) => {
-                                  if (e.startIndex !== undefined && e.endIndex !== undefined && formattedChartData.length > 0) {
-                                    const data = formattedChartData;
-                                    setZoomDomain({
-                                      start: data[e.startIndex]?.timestamp,
-                                      end: data[e.endIndex]?.timestamp
-                                    });
-                                  }
-                                }}
-                              />
-                            </LineChart>
+                        <>
+                          {visibleChartData.length > 0 ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                              {chartType === 'line' 
+                                ? renderLineChart(panel.id) 
+                                : renderBarChart(panel.id)
+                              }
+                            </ResponsiveContainer>
+                          ) : isProcessing ? (
+                            <div className="h-full flex items-center justify-center">
+                              <div className="text-center animate-pulse">
+                                <p>Preparing chart data...</p>
+                                <p className="text-sm text-muted-foreground">This may take a moment for large datasets</p>
+                              </div>
+                            </div>
                           ) : (
-                            <BarChart
-                              data={formattedChartData}
-                              margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
-                            >
-                              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                              <XAxis 
-                                dataKey="timestamp" 
-                                tickFormatter={formatXAxis}
-                                type="number"
-                                domain={zoomDomain.start && zoomDomain.end ? 
-                                  [zoomDomain.start, zoomDomain.end] : 
-                                  ['dataMin', 'dataMax']}
-                                scale="time"
-                                tick={{ fontSize: 12 }}
-                              />
-                              <YAxis tick={{ fontSize: 12 }} />
-                              <RechartsTooltip content={<CustomTooltip />} />
-                              <Legend verticalAlign="top" height={36} />
-                              
-                              {getPanelSignals(panel.id).map((signal) => (
-                                <Bar
-                                  key={signal.id}
-                                  name={signal.name}
-                                  dataKey={signal.name}
-                                  fill={signal.color}
-                                  animationDuration={500}
-                                />
-                              ))}
-                              
-                              <Brush 
-                                dataKey="timestamp" 
-                                height={40} 
-                                stroke="hsl(var(--primary))"
-                                fill="hsla(var(--primary), 0.1)"
-                                onChange={(e) => {
-                                  if (e.startIndex !== undefined && e.endIndex !== undefined && formattedChartData.length > 0) {
-                                    const data = formattedChartData;
-                                    setZoomDomain({
-                                      start: data[e.startIndex]?.timestamp,
-                                      end: data[e.endIndex]?.timestamp
-                                    });
-                                  }
-                                }}
-                              />
-                            </BarChart>
+                            <div className="h-full flex items-center justify-center">
+                              <div className="text-center">
+                                <p>No data to display</p>
+                                <p className="text-sm text-muted-foreground">Try selecting different signals or patterns</p>
+                              </div>
+                            </div>
                           )}
-                        </ResponsiveContainer>
+                        </>
                       )}
                     </TabsContent>
                   ))}
