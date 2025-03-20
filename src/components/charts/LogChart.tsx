@@ -1,21 +1,23 @@
-
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { toast } from "sonner";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, 
   Legend, ResponsiveContainer, Brush, ReferenceLine, BarChart, Bar
 } from 'recharts';
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
 import { 
-  Split, Maximize, X, Plus, RefreshCcw,
-  ZoomIn, LineChart as LineChartIcon, BarChart as BarChartIcon
+  Split, Maximize, X, Plus, RefreshCcw, ZoomIn, ZoomOut,
+  LineChart as LineChartIcon, BarChart as BarChartIcon,
+  Clock, CalendarRange, ChevronRight, ChevronLeft
 } from 'lucide-react';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { RegexPattern } from "../regex/RegexManager";
 import { cn } from "@/lib/utils";
+import { format, addHours, subHours, startOfHour, endOfHour } from 'date-fns';
 
 interface LogData {
   timestamp: Date;
@@ -55,8 +57,8 @@ const CHART_COLORS = [
 ];
 
 // Sampling constants for large datasets
-const MAX_CHART_POINTS = 2000;
-const MAX_VISIBLE_POINTS = 500;
+const MAX_CHART_POINTS = 2000; // Default max points to display
+const MAX_VISIBLE_POINTS = 500; // Max points in a zoomed view
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
@@ -78,6 +80,15 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+// Time range presets for quick selection
+const TIME_RANGE_PRESETS = [
+  { label: 'Last hour', value: '1h', getRange: (now: Date) => ({ start: subHours(now, 1), end: now }) },
+  { label: 'Last 6 hours', value: '6h', getRange: (now: Date) => ({ start: subHours(now, 6), end: now }) },
+  { label: 'Last 12 hours', value: '12h', getRange: (now: Date) => ({ start: subHours(now, 12), end: now }) },
+  { label: 'Last 24 hours', value: '24h', getRange: (now: Date) => ({ start: subHours(now, 24), end: now }) },
+  { label: 'All data', value: 'all', getRange: () => ({ start: undefined, end: undefined }) },
+];
+
 const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) => {
   const [chartData, setChartData] = useState<LogData[]>([]);
   const [formattedChartData, setFormattedChartData] = useState<any[]>([]);
@@ -87,12 +98,20 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   const [activeTab, setActiveTab] = useState<string>("panel-1");
   const [chartType, setChartType] = useState<'line' | 'bar'>('line');
   const [zoomDomain, setZoomDomain] = useState<{ start?: number, end?: number }>({});
-  const [dataStats, setDataStats] = useState<{ total: number, displayed: number }>({ total: 0, displayed: 0 });
+  const [dataStats, setDataStats] = useState<{ total: number, displayed: number, samplingRate: number }>({ 
+    total: 0, 
+    displayed: 0, 
+    samplingRate: 1 
+  });
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [processingStatus, setProcessingStatus] = useState<string>("");
+  const [maxDisplayPoints, setMaxDisplayPoints] = useState<number>(MAX_CHART_POINTS);
+  const [timeRangePreset, setTimeRangePreset] = useState<string>('all');
+  const [customTimeRange, setCustomTimeRange] = useState<{ start?: Date, end?: Date }>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const [rawLogSample, setRawLogSample] = useState<string[]>([]);
   const [stringValueMap, setStringValueMap] = useState<Record<string, Record<string, number>>>({});
+  const [dataRange, setDataRange] = useState<{ min?: Date, max?: Date }>({});
   
   // Memoize the chart data to improve performance
   const memoizedChartData = useMemo(() => displayedChartData, [displayedChartData]);
@@ -130,19 +149,28 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         try {
           const total = formattedChartData.length;
           let sampled;
+          let samplingRate = 1;
           
-          if (total > MAX_CHART_POINTS) {
+          if (total > maxDisplayPoints) {
             // For large datasets, use sampling to reduce points
-            const samplingRate = Math.ceil(total / MAX_CHART_POINTS);
+            samplingRate = Math.ceil(total / maxDisplayPoints);
             sampled = formattedChartData.filter((_, i) => i % samplingRate === 0);
             
             console.log(`Sampled data from ${total} to ${sampled.length} points (rate: 1/${samplingRate})`);
-            setDataStats({ total, displayed: sampled.length });
+            setDataStats({ total, displayed: sampled.length, samplingRate });
             
             toast.info(`Displaying ${sampled.length.toLocaleString()} of ${total.toLocaleString()} data points for performance`);
           } else {
             sampled = formattedChartData;
-            setDataStats({ total, displayed: total });
+            setDataStats({ total, displayed: total, samplingRate: 1 });
+          }
+          
+          // Set the data range for time navigation
+          if (formattedChartData.length > 0) {
+            const timestamps = formattedChartData.map(item => item.timestamp);
+            const minTime = new Date(Math.min(...timestamps));
+            const maxTime = new Date(Math.max(...timestamps));
+            setDataRange({ min: minTime, max: maxTime });
           }
           
           setDisplayedChartData(sampled);
@@ -156,7 +184,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         }
       }, 100);
     }
-  }, [formattedChartData]);
+  }, [formattedChartData, maxDisplayPoints]);
 
   const formatChartData = useCallback((data: LogData[]) => {
     const formattedData = data.map(item => {
@@ -356,29 +384,119 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     processChunk();
   }, [formatChartData]);
 
-  // Calculate visible data based on zoom domain
+  // Apply time range filtering to the data
+  const applyTimeRangeFilter = useCallback((data: any[], timeRange: { start?: Date | number, end?: Date | number }) => {
+    if (!timeRange.start && !timeRange.end) {
+      return data;
+    }
+    
+    const startTime = timeRange.start ? (timeRange.start instanceof Date ? timeRange.start.getTime() : timeRange.start) : undefined;
+    const endTime = timeRange.end ? (timeRange.end instanceof Date ? timeRange.end.getTime() : timeRange.end) : undefined;
+    
+    return data.filter(item => {
+      const itemTime = item.timestamp;
+      if (startTime && endTime) {
+        return itemTime >= startTime && itemTime <= endTime;
+      } else if (startTime) {
+        return itemTime >= startTime;
+      } else if (endTime) {
+        return itemTime <= endTime;
+      }
+      return true;
+    });
+  }, []);
+
+  // Calculate visible data based on zoom domain and time range
   const getVisibleData = useCallback(() => {
-    if (!zoomDomain.start || !zoomDomain.end) {
-      // If no zoom is applied, return the displayed chart data
-      return memoizedChartData;
+    // Apply time range filter first
+    let filteredData = memoizedChartData;
+    
+    if (customTimeRange.start || customTimeRange.end) {
+      filteredData = applyTimeRangeFilter(memoizedChartData, customTimeRange);
     }
     
-    // Filter data to show only the zoomed range
-    const visibleData = memoizedChartData.filter(
-      (item) => item.timestamp >= zoomDomain.start! && item.timestamp <= zoomDomain.end!
-    );
-    
-    // Apply additional sampling if the zoomed range still has too many points
-    if (visibleData.length > MAX_VISIBLE_POINTS) {
-      const samplingRate = Math.ceil(visibleData.length / MAX_VISIBLE_POINTS);
-      return visibleData.filter((_, i) => i % samplingRate === 0);
+    // Then apply zoom if needed
+    if (zoomDomain.start && zoomDomain.end) {
+      filteredData = filteredData.filter(
+        (item) => item.timestamp >= zoomDomain.start! && item.timestamp <= zoomDomain.end!
+      );
     }
     
-    return visibleData;
-  }, [memoizedChartData, zoomDomain]);
+    // Apply additional sampling if the filtered range still has too many points
+    if (filteredData.length > MAX_VISIBLE_POINTS) {
+      const samplingRate = Math.ceil(filteredData.length / MAX_VISIBLE_POINTS);
+      return filteredData.filter((_, i) => i % samplingRate === 0);
+    }
+    
+    return filteredData;
+  }, [memoizedChartData, zoomDomain, customTimeRange, applyTimeRangeFilter]);
 
   // Memoize the visible data to improve performance
   const visibleChartData = useMemo(() => getVisibleData(), [getVisibleData]);
+
+  // Function to navigate through time periods
+  const navigateTime = useCallback((direction: 'forward' | 'backward') => {
+    if (!customTimeRange.start || !customTimeRange.end) return;
+    
+    const start = customTimeRange.start;
+    const end = customTimeRange.end;
+    const duration = end.getTime() - start.getTime();
+    
+    if (direction === 'forward') {
+      const newStart = new Date(start.getTime() + duration);
+      const newEnd = new Date(end.getTime() + duration);
+      // Don't go beyond the available data
+      if (dataRange.max && newEnd > dataRange.max) {
+        const adjustedEnd = dataRange.max;
+        const adjustedStart = new Date(adjustedEnd.getTime() - duration);
+        setCustomTimeRange({ start: adjustedStart, end: adjustedEnd });
+      } else {
+        setCustomTimeRange({ start: newStart, end: newEnd });
+      }
+    } else {
+      const newStart = new Date(start.getTime() - duration);
+      const newEnd = new Date(end.getTime() - duration);
+      // Don't go before the available data
+      if (dataRange.min && newStart < dataRange.min) {
+        const adjustedStart = dataRange.min;
+        const adjustedEnd = new Date(adjustedStart.getTime() + duration);
+        setCustomTimeRange({ start: adjustedStart, end: adjustedEnd });
+      } else {
+        setCustomTimeRange({ start: newStart, end: newEnd });
+      }
+    }
+  }, [customTimeRange, dataRange]);
+
+  // Handle time range preset selection
+  const handleTimeRangePresetChange = useCallback((preset: string) => {
+    setTimeRangePreset(preset);
+    setZoomDomain({}); // Reset zoom when changing time range
+    
+    if (preset === 'all') {
+      setCustomTimeRange({});
+    } else if (preset === 'custom') {
+      // Keep current custom range if it exists
+      if (!customTimeRange.start || !customTimeRange.end) {
+        // Set a default 1-hour range at the end of the data if no custom range exists
+        if (dataRange.max) {
+          const end = dataRange.max;
+          const start = subHours(end, 1);
+          setCustomTimeRange({ start, end });
+        }
+      }
+    } else {
+      // Apply one of the standard presets
+      const presetConfig = TIME_RANGE_PRESETS.find(p => p.value === preset);
+      if (presetConfig && dataRange.max) {
+        const range = presetConfig.getRange(dataRange.max);
+        // Make sure the range is within our data
+        if (dataRange.min && range.start && range.start < dataRange.min) {
+          range.start = dataRange.min;
+        }
+        setCustomTimeRange(range);
+      }
+    }
+  }, [customTimeRange, dataRange]);
 
   const handleAddPanel = useCallback(() => {
     const newPanelId = `panel-${panels.length + 1}`;
@@ -438,6 +556,11 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
   }, []);
 
+  // Format for longer time labels, used in time navigation
+  const formatTimeLabel = useCallback((date: Date) => {
+    return format(date, 'MMM dd, HH:mm');
+  }, []);
+
   const getPanelSignals = useCallback((panelId: string) => {
     const panel = panels.find(p => p.id === panelId);
     if (!panel) return [];
@@ -458,9 +581,57 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     setZoomDomain({});
     setStringValueMap({});
     setRawLogSample([]);
-    setDataStats({ total: 0, displayed: 0 });
+    setDataStats({ total: 0, displayed: 0, samplingRate: 1 });
+    setCustomTimeRange({});
+    setTimeRangePreset('all');
     toast.success("Reset all data and settings");
   }, []);
+
+  // Handle max display points change
+  const handleMaxPointsChange = useCallback((value: number[]) => {
+    const newMaxPoints = value[0];
+    if (newMaxPoints !== maxDisplayPoints) {
+      setMaxDisplayPoints(newMaxPoints);
+      
+      // Reapply sampling with the new max points setting
+      if (formattedChartData.length > 0) {
+        setProcessingStatus("Resampling data...");
+        setIsProcessing(true);
+        
+        // Use setTimeout to prevent UI freezing
+        setTimeout(() => {
+          try {
+            const total = formattedChartData.length;
+            let sampled;
+            let samplingRate = 1;
+            
+            if (total > newMaxPoints) {
+              // For large datasets, use sampling to reduce points
+              samplingRate = Math.ceil(total / newMaxPoints);
+              sampled = formattedChartData.filter((_, i) => i % samplingRate === 0);
+              
+              console.log(`Resampled data from ${total} to ${sampled.length} points (rate: 1/${samplingRate})`);
+              setDataStats({ total, displayed: sampled.length, samplingRate });
+              
+              toast.info(`Now displaying ${sampled.length.toLocaleString()} of ${total.toLocaleString()} data points`);
+            } else {
+              sampled = formattedChartData;
+              setDataStats({ total, displayed: total, samplingRate: 1 });
+            }
+            
+            setDisplayedChartData(sampled);
+            setProcessingStatus("");
+            setIsProcessing(false);
+          } catch (error) {
+            console.error("Error resampling data:", error);
+            toast.error("Error resampling data");
+            setIsProcessing(false);
+            setProcessingStatus("");
+          }
+        }, 0);
+      }
+    }
+  }, [maxDisplayPoints, formattedChartData]);
 
   // Memoize the line chart component to improve performance
   const renderLineChart = useCallback((panelId: string) => {
@@ -506,8 +677,8 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
           stroke="hsl(var(--primary))"
           fill="hsla(var(--primary), 0.1)"
           onChange={(e) => {
-            if (e.startIndex !== undefined && e.endIndex !== undefined && formattedChartData.length > 0) {
-              const data = formattedChartData;
+            if (e.startIndex !== undefined && e.endIndex !== undefined && visibleChartData.length > 0) {
+              const data = visibleChartData;
               setZoomDomain({
                 start: data[e.startIndex]?.timestamp,
                 end: data[e.endIndex]?.timestamp
@@ -517,7 +688,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         />
       </LineChart>
     );
-  }, [visibleChartData, zoomDomain, formatXAxis, getPanelSignals, formattedChartData]);
+  }, [visibleChartData, zoomDomain, formatXAxis, getPanelSignals]);
 
   // Memoize the bar chart component to improve performance
   const renderBarChart = useCallback((panelId: string) => {
@@ -559,8 +730,8 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
           stroke="hsl(var(--primary))"
           fill="hsla(var(--primary), 0.1)"
           onChange={(e) => {
-            if (e.startIndex !== undefined && e.endIndex !== undefined && formattedChartData.length > 0) {
-              const data = formattedChartData;
+            if (e.startIndex !== undefined && e.endIndex !== undefined && visibleChartData.length > 0) {
+              const data = visibleChartData;
               setZoomDomain({
                 start: data[e.startIndex]?.timestamp,
                 end: data[e.endIndex]?.timestamp
@@ -570,7 +741,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         />
       </BarChart>
     );
-  }, [visibleChartData, zoomDomain, formatXAxis, getPanelSignals, formattedChartData]);
+  }, [visibleChartData, zoomDomain, formatXAxis, getPanelSignals]);
 
   return (
     <div className={cn("space-y-4", className)} ref={containerRef}>
@@ -610,12 +781,16 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
             </Card>
           )}
         
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <h3 className="text-lg font-medium">Signal Visualization</h3>
-            <div className="flex items-center gap-2">
-              {dataStats.total > 0 && dataStats.total !== dataStats.displayed && (
-                <div className="text-xs text-muted-foreground">
-                  Showing {dataStats.displayed.toLocaleString()} of {dataStats.total.toLocaleString()} points
+            <div className="flex flex-wrap items-center gap-2">
+              {dataStats.total > 0 && (
+                <div className="text-xs text-muted-foreground bg-secondary px-2 py-1 rounded">
+                  {dataStats.samplingRate > 1 ? (
+                    <>Showing {dataStats.displayed.toLocaleString()} of {dataStats.total.toLocaleString()} points (1:{dataStats.samplingRate})</>
+                  ) : (
+                    <>Showing all {dataStats.total.toLocaleString()} points</>
+                  )}
                 </div>
               )}
               <Button
@@ -660,6 +835,105 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
               </Select>
             </div>
           </div>
+          
+          {/* Time Navigation Controls */}
+          <Card className="p-4 border border-border/50">
+            <CardHeader className="p-0 pb-4">
+              <div className="flex justify-between items-center">
+                <CardTitle className="text-sm font-medium">Time Range Selection</CardTitle>
+                <div className="flex items-center gap-2">
+                  <Select 
+                    value={timeRangePreset} 
+                    onValueChange={handleTimeRangePresetChange}
+                  >
+                    <SelectTrigger className="w-[130px] h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TIME_RANGE_PRESETS.map((preset) => (
+                        <SelectItem key={preset.value} value={preset.value}>
+                          {preset.label}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value="custom">Custom Range</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <div className="text-sm">
+                    <p className="font-medium">Data Points</p>
+                    <p className="text-xs text-muted-foreground">
+                      Configure how many points to display for large datasets
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Fewer (faster)</span>
+                    <span>More (detailed)</span>
+                  </div>
+                  <Slider
+                    value={[maxDisplayPoints]}
+                    min={500}
+                    max={10000}
+                    step={500}
+                    onValueChange={handleMaxPointsChange}
+                  />
+                  <div className="text-xs text-center text-muted-foreground">
+                    Maximum: {maxDisplayPoints.toLocaleString()} points
+                  </div>
+                </div>
+              </div>
+              
+              {timeRangePreset === 'custom' && customTimeRange.start && customTimeRange.end && (
+                <div className="mt-4 border-t pt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <CalendarRange className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">Custom Time Range</span>
+                    </div>
+                    <div className="flex gap-1">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-6 w-6"
+                        onClick={() => navigateTime('backward')}
+                      >
+                        <ChevronLeft className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-6 w-6"
+                        onClick={() => navigateTime('forward')}
+                      >
+                        <ChevronRight className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <div className="px-2 py-1 bg-accent/10 rounded">
+                      From: {formatTimeLabel(customTimeRange.start)}
+                    </div>
+                    <div className="px-2 py-1 bg-accent/10 rounded">
+                      To: {formatTimeLabel(customTimeRange.end)}
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {timeRangePreset !== 'all' && timeRangePreset !== 'custom' && (
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {TIME_RANGE_PRESETS.find(p => p.value === timeRangePreset)?.label} view activated
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="md:col-span-1">
