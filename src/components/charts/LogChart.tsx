@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { toast } from "sonner";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, 
@@ -54,6 +54,9 @@ const CHART_COLORS = [
   '#0EA5E9', // sky
 ];
 
+// Sampling constant for large datasets
+const MAX_CHART_POINTS = 2000;
+
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     return (
@@ -77,41 +80,66 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) => {
   const [chartData, setChartData] = useState<LogData[]>([]);
   const [formattedChartData, setFormattedChartData] = useState<any[]>([]);
+  const [displayedChartData, setDisplayedChartData] = useState<any[]>([]);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [panels, setPanels] = useState<ChartPanel[]>([{ id: 'panel-1', signals: [] }]);
   const [activeTab, setActiveTab] = useState<string>("panel-1");
   const [chartType, setChartType] = useState<'line' | 'bar'>('line');
   const [zoomDomain, setZoomDomain] = useState<{ start?: number, end?: number }>({});
+  const [dataStats, setDataStats] = useState<{ total: number, displayed: number }>({ total: 0, displayed: 0 });
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [rawLogSample, setRawLogSample] = useState<string[]>([]);
   const [stringValueMap, setStringValueMap] = useState<Record<string, Record<string, number>>>({});
 
+  // Process log data in chunks using a worker
   useEffect(() => {
     if (!logContent || patterns.length === 0) return;
     
     try {
+      setIsProcessing(true);
       const logLines = logContent.split('\n');
       setRawLogSample(logLines.slice(0, 10));
       
       console.log("Processing log data with patterns:", patterns);
-      console.log("First 5 log lines:", logLines.slice(0, 5));
+      console.log(`Starting to process ${logLines.length} log lines`);
       
-      processLogData(logContent, patterns);
-      toast.success("Log data processed successfully");
+      // Process in chunks to avoid UI freezing
+      processLogDataInChunks(logContent, patterns);
+      toast.success("Started processing log data");
     } catch (error) {
       console.error("Error processing log data:", error);
       toast.error("Error processing log data");
+      setIsProcessing(false);
     }
   }, [logContent, patterns]);
 
+  // Create a sampled version of the data for display when data is large
   useEffect(() => {
-    if (chartData.length > 0) {
-      formatChartData();
+    if (formattedChartData.length > 0) {
+      const total = formattedChartData.length;
+      let sampled;
+      
+      if (total > MAX_CHART_POINTS) {
+        // For large datasets, use sampling to reduce points
+        const samplingRate = Math.ceil(total / MAX_CHART_POINTS);
+        sampled = formattedChartData.filter((_, i) => i % samplingRate === 0);
+        
+        console.log(`Sampled data from ${total} to ${sampled.length} points (rate: 1/${samplingRate})`);
+        setDataStats({ total, displayed: sampled.length });
+        
+        toast.info(`Displaying ${sampled.length.toLocaleString()} of ${total.toLocaleString()} data points for performance reasons`);
+      } else {
+        sampled = formattedChartData;
+        setDataStats({ total, displayed: total });
+      }
+      
+      setDisplayedChartData(sampled);
     }
-  }, [chartData, stringValueMap]);
+  }, [formattedChartData]);
 
-  const formatChartData = () => {
-    const formattedData = chartData.map(item => {
+  const formatChartData = useCallback((data: LogData[]) => {
+    const formattedData = data.map(item => {
       const dataPoint: any = {
         timestamp: item.timestamp.getTime(),
       };
@@ -125,7 +153,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
             // Also store the original string value for tooltip display
             dataPoint[`${key}_original`] = value;
           } else {
-            console.warn(`No string value mapping found for ${key}`);
             dataPoint[key] = 0;
           }
         } else {
@@ -136,16 +163,21 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       return dataPoint;
     });
 
-    setFormattedChartData(formattedData);
-    console.log("Formatted chart data:", formattedData.slice(0, 3));
-  };
+    console.log(`Formatted ${formattedData.length} data points`);
+    return formattedData;
+  }, [stringValueMap]);
 
-  const processLogData = (content: string, regexPatterns: RegexPattern[]) => {
-    setChartData([]);
-    
+  // Break the processing into chunks to prevent UI freezing
+  const processLogDataInChunks = useCallback((content: string, regexPatterns: RegexPattern[]) => {
+    const CHUNK_SIZE = 1000; // Number of lines to process in each chunk
     const lines = content.split('\n');
-    const parsedData: LogData[] = [];
+    const totalLines = lines.length;
+    const chunks = Math.ceil(totalLines / CHUNK_SIZE);
     
+    setChartData([]);
+    setFormattedChartData([]);
+    
+    // Create signals before processing
     const newSignals: Signal[] = regexPatterns.map((pattern, index) => ({
       id: `signal-${Date.now()}-${index}`,
       name: pattern.name,
@@ -157,118 +189,140 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     setSignals(newSignals);
     setPanels([{ id: 'panel-1', signals: newSignals.map(s => s.id) }]);
     
-    let successCount = 0;
-    let failCount = 0;
+    console.log(`Processing ${totalLines} lines in ${chunks} chunks of ${CHUNK_SIZE}`);
     
-    console.log(`Processing ${lines.length} log lines with ${regexPatterns.length} patterns`);
-    
-    // Track unique string values for each signal
+    let currentChunk = 0;
+    const parsedData: LogData[] = [];
     const stringValues: Record<string, Set<string>> = {};
-    
-    // Create a map to track the last seen values for each pattern
     const lastSeenValues: Record<string, number | string> = {};
     
-    lines.forEach((line, lineIndex) => {
-      if (!line.trim()) return;
-      
-      const timestampMatch = line.match(/^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}\.\d{6})/);
-      
-      if (timestampMatch) {
-        try {
-          const timestampStr = timestampMatch[1];
-          const isoTimestamp = timestampStr
-            .replace(/\//g, '-')
-            .replace(' ', 'T')
-            .substring(0, 23);
-          
-          const timestamp = new Date(isoTimestamp);
-          
-          if (isNaN(timestamp.getTime())) {
-            console.warn(`Invalid timestamp at line ${lineIndex + 1}: ${timestampStr}`);
-            return;
-          }
-          
-          const values: { [key: string]: number | string } = {};
-          let hasNewValue = false;
-          
-          regexPatterns.forEach((pattern) => {
-            try {
-              const regex = new RegExp(pattern.pattern);
-              const match = line.match(regex);
-              
-              if (match && match[1] !== undefined) {
-                const value = isNaN(Number(match[1])) ? match[1] : Number(match[1]);
-                values[pattern.name] = value;
-                lastSeenValues[pattern.name] = value;
-                hasNewValue = true;
-                
-                // If string value, track it for numeric mapping
-                if (typeof value === 'string') {
-                  if (!stringValues[pattern.name]) {
-                    stringValues[pattern.name] = new Set<string>();
-                  }
-                  stringValues[pattern.name].add(value);
-                }
-                
-                successCount++;
-              }
-            } catch (error) {
-              console.error(`Error applying regex pattern "${pattern.name}" to line: ${line}`, error);
-              failCount++;
-            }
-          });
-          
-          // Copy last seen values for patterns not found in this line
-          regexPatterns.forEach((pattern) => {
-            if (!(pattern.name in values) && pattern.name in lastSeenValues) {
-              values[pattern.name] = lastSeenValues[pattern.name];
-            }
-          });
-          
-          if (Object.keys(values).length > 0 && hasNewValue) {
-            parsedData.push({ timestamp, values });
-          }
-        } catch (error) {
-          console.error(`Error processing line ${lineIndex + 1}: ${line}`, error);
-        }
-      } else if (lineIndex < 10) {
-        console.warn(`No timestamp match at line ${lineIndex + 1}: ${line}`);
+    // Process chunks with setTimeout to avoid blocking UI
+    const processChunk = () => {
+      if (currentChunk >= chunks) {
+        finalizeProcessing(parsedData, stringValues);
+        return;
       }
-    });
-    
-    console.log(`Parsing complete. Success: ${successCount}, Failed: ${failCount}, Total data points: ${parsedData.length}`);
-    
-    parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-    
-    // Create numeric mappings for string values
-    const newStringValueMap: Record<string, Record<string, number>> = {};
-    
-    Object.entries(stringValues).forEach(([key, valueSet]) => {
-      newStringValueMap[key] = {};
-      Array.from(valueSet).sort().forEach((value, index) => {
-        newStringValueMap[key][value] = index + 1; // Start from 1 to avoid zero values
+      
+      const startIdx = currentChunk * CHUNK_SIZE;
+      const endIdx = Math.min((currentChunk + 1) * CHUNK_SIZE, totalLines);
+      const chunkLines = lines.slice(startIdx, endIdx);
+      
+      // Process this chunk
+      let successCount = 0;
+      
+      chunkLines.forEach((line) => {
+        if (!line.trim()) return;
+        
+        const timestampMatch = line.match(/^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}\.\d{6})/);
+        
+        if (timestampMatch) {
+          try {
+            const timestampStr = timestampMatch[1];
+            const isoTimestamp = timestampStr
+              .replace(/\//g, '-')
+              .replace(' ', 'T')
+              .substring(0, 23);
+            
+            const timestamp = new Date(isoTimestamp);
+            
+            if (isNaN(timestamp.getTime())) {
+              return;
+            }
+            
+            const values: { [key: string]: number | string } = {};
+            let hasNewValue = false;
+            
+            regexPatterns.forEach((pattern) => {
+              try {
+                const regex = new RegExp(pattern.pattern);
+                const match = line.match(regex);
+                
+                if (match && match[1] !== undefined) {
+                  const value = isNaN(Number(match[1])) ? match[1] : Number(match[1]);
+                  values[pattern.name] = value;
+                  lastSeenValues[pattern.name] = value;
+                  hasNewValue = true;
+                  
+                  // If string value, track it for numeric mapping
+                  if (typeof value === 'string') {
+                    if (!stringValues[pattern.name]) {
+                      stringValues[pattern.name] = new Set<string>();
+                    }
+                    stringValues[pattern.name].add(value);
+                  }
+                  
+                  successCount++;
+                }
+              } catch (error) {
+                // Skip errors in regex matching
+              }
+            });
+            
+            // Copy last seen values for patterns not found in this line
+            regexPatterns.forEach((pattern) => {
+              if (!(pattern.name in values) && pattern.name in lastSeenValues) {
+                values[pattern.name] = lastSeenValues[pattern.name];
+              }
+            });
+            
+            if (Object.keys(values).length > 0 && hasNewValue) {
+              parsedData.push({ timestamp, values });
+            }
+          } catch (error) {
+            // Skip errors in line processing
+          }
+        }
       });
-      console.log(`Created mapping for ${key}:`, newStringValueMap[key]);
-    });
+      
+      // Update progress
+      const progress = Math.round(((currentChunk + 1) / chunks) * 100);
+      if (progress % 20 === 0 || progress === 100) {
+        toast.info(`Processing: ${progress}% - Found ${parsedData.length.toLocaleString()} data points so far`);
+      }
+      
+      currentChunk++;
+      setTimeout(processChunk, 0); // Schedule next chunk, giving UI time to update
+    };
     
-    setStringValueMap(newStringValueMap);
+    // Finalize the processing after all chunks are done
+    const finalizeProcessing = (parsedData: LogData[], stringValues: Record<string, Set<string>>) => {
+      parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+      
+      // Create numeric mappings for string values
+      const newStringValueMap: Record<string, Record<string, number>> = {};
+      
+      Object.entries(stringValues).forEach(([key, valueSet]) => {
+        newStringValueMap[key] = {};
+        Array.from(valueSet).sort().forEach((value, index) => {
+          newStringValueMap[key][value] = index + 1; // Start from 1 to avoid zero values
+        });
+      });
+      
+      setStringValueMap(newStringValueMap);
+      
+      if (parsedData.length === 0) {
+        toast.warning("No matching data found with the provided patterns");
+      } else {
+        toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
+      }
+      
+      setChartData(parsedData);
+      const formatted = formatChartData(parsedData);
+      setFormattedChartData(formatted);
+      setIsProcessing(false);
+    };
     
-    if (parsedData.length === 0) {
-      toast.warning("No matching data found with the provided patterns");
-    } else {
-      toast.success(`Found ${parsedData.length} data points with the selected patterns`);
-    }
-    
-    setChartData(parsedData);
-  };
+    // Start processing the first chunk
+    processChunk();
+  }, [formatChartData]);
 
-  const handleAddPanel = () => {
+  const handleAddPanel = useCallback(() => {
     const newPanelId = `panel-${panels.length + 1}`;
     setPanels([...panels, { id: newPanelId, signals: [] }]);
     setActiveTab(newPanelId);
-  };
+  }, [panels]);
 
-  const handleRemovePanel = (panelId: string) => {
+  const handleRemovePanel = useCallback((panelId: string) => {
     if (panels.length <= 1) {
       toast.error("Cannot remove the only panel");
       return;
@@ -280,9 +334,9 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     if (activeTab === panelId) {
       setActiveTab(updatedPanels[0].id);
     }
-  };
+  }, [panels, activeTab]);
 
-  const handleAddSignalToPanel = (panelId: string, signalId: string) => {
+  const handleAddSignalToPanel = useCallback((panelId: string, signalId: string) => {
     setPanels(panels.map(panel => {
       if (panel.id === panelId) {
         if (!panel.signals.includes(signalId)) {
@@ -291,45 +345,45 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       }
       return panel;
     }));
-  };
+  }, [panels]);
 
-  const handleRemoveSignalFromPanel = (panelId: string, signalId: string) => {
+  const handleRemoveSignalFromPanel = useCallback((panelId: string, signalId: string) => {
     setPanels(panels.map(panel => {
       if (panel.id === panelId) {
         return { ...panel, signals: panel.signals.filter(id => id !== signalId) };
       }
       return panel;
     }));
-  };
+  }, [panels]);
 
-  const toggleSignalVisibility = (signalId: string) => {
+  const toggleSignalVisibility = useCallback((signalId: string) => {
     setSignals(signals.map(signal => {
       if (signal.id === signalId) {
         return { ...signal, visible: !signal.visible };
       }
       return signal;
     }));
-  };
+  }, [signals]);
 
-  const handleZoomReset = () => {
+  const handleZoomReset = useCallback(() => {
     setZoomDomain({});
-  };
+  }, []);
 
-  const formatXAxis = (tickItem: any) => {
+  const formatXAxis = useCallback((tickItem: any) => {
     const date = new Date(tickItem);
     return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
-  };
+  }, []);
 
-  const getPanelSignals = (panelId: string) => {
+  const getPanelSignals = useCallback((panelId: string) => {
     const panel = panels.find(p => p.id === panelId);
     if (!panel) return [];
     
     return signals.filter(signal => 
       panel.signals.includes(signal.id) && signal.visible
     );
-  };
+  }, [panels, signals]);
 
-  const handleResetAll = () => {
+  const handleResetAll = useCallback(() => {
     setChartData([]);
     setFormattedChartData([]);
     setSignals([]);
@@ -339,14 +393,29 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     setZoomDomain({});
     setStringValueMap({});
     setRawLogSample([]);
+    setDataStats({ total: 0, displayed: 0 });
     toast.success("Reset all data and settings");
-  };
+  }, []);
 
   return (
     <div className={cn("space-y-4", className)} ref={containerRef}>
       {signals.length > 0 ? (
         <>
-          {chartData.length === 0 && (
+          {isProcessing && (
+            <Card className="p-4 border-blue-500 bg-blue-50 dark:bg-blue-900/20">
+              <div className="flex items-start gap-2">
+                <div className="text-blue-500">⏳</div>
+                <div>
+                  <h3 className="font-medium">Processing large log file</h3>
+                  <p className="text-sm text-muted-foreground">
+                    This may take a few moments, please wait...
+                  </p>
+                </div>
+              </div>
+            </Card>
+          )}
+          
+          {!isProcessing && chartData.length === 0 && (
             <Card className="p-4 border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20">
               <div className="flex items-start gap-2">
                 <div className="text-yellow-500">⚠️</div>
@@ -369,6 +438,11 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
           <div className="flex justify-between items-center">
             <h3 className="text-lg font-medium">Signal Visualization</h3>
             <div className="flex items-center gap-2">
+              {dataStats.total > 0 && dataStats.total !== dataStats.displayed && (
+                <div className="text-xs text-muted-foreground">
+                  Showing {dataStats.displayed.toLocaleString()} of {dataStats.total.toLocaleString()} points
+                </div>
+              )}
               <Button
                 variant="outline"
                 size="sm"

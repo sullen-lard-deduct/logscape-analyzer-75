@@ -57,7 +57,7 @@ const Index = () => {
             <Wand className="h-4 w-4 text-accent" />
           </div>
         </div>
-        <h1 className="text-4xl font-bold tracking-tight mb-2">LogScape Analyzer</h1>
+        <h1 className="text-4xl font-bold tracking-tight mb-2">LogVision</h1>
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
           Analyze and visualize your log files with ease. Upload logs, define patterns, and gain insights through interactive visualizations.
         </p>

@@ -13,7 +13,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({ children, className }) => {
       <header className="border-b border-border/40 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto py-4 px-4 sm:px-6 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="font-semibold tracking-tight text-xl">LogScape Analyzer</span>
+            <span className="font-semibold tracking-tight text-xl">LogVision</span>
             <span className="text-xs px-2 py-0.5 rounded-full bg-accent/10 text-accent-foreground/70">
               Beta
             </span>
@@ -45,7 +45,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({ children, className }) => {
       </main>
       <footer className="border-t border-border/40 py-6 mt-12">
         <div className="container mx-auto px-4 sm:px-6 text-center text-sm text-muted-foreground">
-          <p>LogScape Analyzer &copy; {new Date().getFullYear()}</p>
+          <p>LogVision &copy; {new Date().getFullYear()}</p>
         </div>
       </footer>
     </div>
