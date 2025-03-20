@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import { toast } from "sonner";
 import { FileText, Wand, RefreshCcw } from "lucide-react";
@@ -17,6 +16,7 @@ const Index = () => {
 
   const handleFileProcessed = (content: string) => {
     setLogContent(content);
+    setSelectedPatterns([]);
     setActiveTab("patterns");
     toast.success("Log file successfully processed");
   };
