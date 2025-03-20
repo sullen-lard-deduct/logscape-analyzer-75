@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { toast } from "sonner";
 import { FileText, Wand, RefreshCcw } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
@@ -14,6 +14,12 @@ const Index = () => {
   const [logContent, setLogContent] = useState<string>("");
   const [selectedPatterns, setSelectedPatterns] = useState<RegexPattern[]>([]);
   const [activeTab, setActiveTab] = useState<string>("upload");
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  // Mark component as loaded after initial render
+  useEffect(() => {
+    setIsLoaded(true);
+  }, []);
 
   const handleFileProcessed = useCallback((content: string) => {
     // Reset state when a new file is uploaded
@@ -34,6 +40,11 @@ const Index = () => {
     setActiveTab("upload");
     toast.success("All data has been reset");
   }, []);
+
+  // If the component hasn't loaded yet, return an empty div to prevent flash of content
+  if (!isLoaded) {
+    return <div className="min-h-screen bg-background" />;
+  }
 
   return (
     <AppLayout>
@@ -92,7 +103,7 @@ const Index = () => {
             <CardHeader>
               <CardTitle>Upload Log File</CardTitle>
               <CardDescription>
-                Upload a log file (.log, .txt, .zip, .gz, or .7z) to analyze patterns and visualize data.
+                Upload a log file (.log, .txt, .zip, or .gz) to analyze patterns and visualize data.
               </CardDescription>
             </CardHeader>
             <CardContent>

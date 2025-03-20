@@ -3,12 +3,15 @@ import React, { useState, useRef, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Upload, File, CheckCircle2 } from "lucide-react";
+import { Upload, File, CheckCircle2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import JSZip from "jszip";
-import * as pako from "pako";
-import { LZMA } from "lzma";
+import { 
+  readAsText, 
+  decompressZip, 
+  decompressGzip, 
+  isValidFileType 
+} from "@/utils/fileHandlers";
 
 interface FileUploaderProps {
   onFileProcessed: (content: string) => void;
@@ -17,107 +20,15 @@ interface FileUploaderProps {
 const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [currentStep, setCurrentStep] = useState<"uploading" | "decompressing" | "processing" | "complete">("uploading");
+  const [currentStep, setCurrentStep] = useState<"uploading" | "decompressing" | "processing" | "complete" | "error">("uploading");
   const [fileName, setFileName] = useState<string>("");
   const [fileSize, setFileSize] = useState<number>(0);
   const [progress, setProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const isValidFileType = (fileName: string): boolean => {
-    const supportedExtensions = [".log", ".txt", ".zip", ".gz", ".7z"];
-    return supportedExtensions.some(ext => 
-      fileName.toLowerCase().endsWith(ext)
-    );
-  };
-
-  const readAsText = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsText(file);
-    });
-  };
-
-  const readAsArrayBuffer = (file: File): Promise<ArrayBuffer> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as ArrayBuffer);
-      reader.onerror = reject;
-      reader.readAsArrayBuffer(file);
-    });
-  };
-
-  const decompressZip = async (file: File): Promise<string> => {
-    try {
-      const arrayBuffer = await readAsArrayBuffer(file);
-      const zip = new JSZip();
-      const zipContents = await zip.loadAsync(arrayBuffer);
-      
-      // Find the first .log or .txt file in the zip
-      const logFiles = Object.keys(zipContents.files).filter(
-        filename => filename.endsWith('.log') || filename.endsWith('.txt')
-      );
-      
-      if (logFiles.length === 0) {
-        throw new Error("No log files found in the ZIP archive");
-      }
-      
-      // Use the first log file found
-      const logFile = zipContents.files[logFiles[0]];
-      const content = await logFile.async("string");
-      
-      return content;
-    } catch (error) {
-      console.error("Failed to decompress ZIP file:", error);
-      throw new Error("Failed to extract log file from the ZIP archive. It may be corrupted or not a valid ZIP file.");
-    }
-  };
-
-  const decompressGzip = async (file: File): Promise<string> => {
-    try {
-      const arrayBuffer = await readAsArrayBuffer(file);
-      const compressed = new Uint8Array(arrayBuffer);
-      const decompressed = pako.ungzip(compressed);
-      
-      // Convert Uint8Array to string
-      const textDecoder = new TextDecoder('utf-8');
-      return textDecoder.decode(decompressed);
-    } catch (error) {
-      console.error("Failed to decompress GZIP file:", error);
-      throw new Error("Failed to decompress GZIP file. It may be corrupted or not a valid GZIP file.");
-    }
-  };
-
-  const decompress7z = async (file: File): Promise<string> => {
-    try {
-      const arrayBuffer = await readAsArrayBuffer(file);
-      const content = await new Promise<string>((resolve, reject) => {
-        LZMA.decompress(new Uint8Array(arrayBuffer), 
-          (result, error) => {
-            if (error) {
-              reject(new Error("Failed to decompress 7z file"));
-            } else {
-              resolve(result);
-            }
-          },
-          (progress) => {
-            // Update progress during decompression
-            setProgress(Math.round(progress * 100));
-          }
-        );
-      });
-      
-      return content;
-    } catch (error) {
-      console.error("Failed to decompress 7z file:", error);
-      toast.error("Failed to process 7z file. It may be corrupted or in an unsupported format.");
-      throw new Error("Failed to extract log file from the 7z archive. It may be corrupted or not a valid 7z file.");
-    }
-  };
-
   const processLogFile = async (file: File): Promise<string> => {
     setCurrentStep("decompressing");
+    setProgress(10);
 
     let content = "";
     const fileName = file.name.toLowerCase();
@@ -128,23 +39,28 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed }) => {
       } else if (fileName.endsWith('.zip')) {
         content = await decompressZip(file);
       } else if (fileName.endsWith('.7z')) {
-        content = await decompress7z(file);
+        // For now, we'll show a friendly message about 7z support
+        toast.error("7z file support is temporarily unavailable. Please use .zip, .gz, .log, or .txt files instead.");
+        setCurrentStep("error");
+        throw new Error("7z support temporarily unavailable");
       } else {
         // Regular .log or .txt file
         content = await readAsText(file);
       }
       
+      setProgress(70);
       return content;
     } catch (error) {
       console.error("Error processing file:", error);
+      setCurrentStep("error");
       toast.error(error instanceof Error ? error.message : "Failed to process file");
       throw error;
     }
   };
 
   const processFile = async (file: File) => {
-    if (!isValidFileType(file.name)) {
-      toast.error("Invalid file type. Please upload a .log, .txt, .zip, .gz, or .7z file");
+    if (!isValidFileType(file.name) && !file.name.toLowerCase().endsWith('.7z')) {
+      toast.error("Invalid file type. Please upload a .log, .txt, .zip, or .gz file");
       return;
     }
 
@@ -162,26 +78,37 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed }) => {
             clearInterval(uploadInterval);
             return 100;
           }
-          return prev + 5;
+          return Math.min(prev + 5, 30); // Cap at 30% for upload phase
         });
       }, 50);
 
       // Give UI time to show the upload animation
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 800));
       clearInterval(uploadInterval);
       
-      setProgress(0);
+      // Handle 7z files with a friendly message
+      if (file.name.toLowerCase().endsWith('.7z')) {
+        toast.error("7z file support is temporarily unavailable. Please use .zip, .gz, .log, or .txt files instead.");
+        setIsUploading(false);
+        setCurrentStep("error");
+        return;
+      }
+      
       const content = await processLogFile(file);
 
       setCurrentStep("processing");
+      setProgress(80);
+      
       // Simulate processing delay - this gives users feedback that work is happening
-      await new Promise(resolve => setTimeout(resolve, 800));
+      await new Promise(resolve => setTimeout(resolve, 500));
+      setProgress(100);
       
       setCurrentStep("complete");
       onFileProcessed(content);
     } catch (error) {
       console.error("Error processing file:", error);
-      toast.error("Failed to process file. Please try again.");
+      toast.error("Failed to process file. Please try again with a different format.");
+      setCurrentStep("error");
     } finally {
       setIsUploading(false);
     }
@@ -204,13 +131,13 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed }) => {
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       processFile(e.dataTransfer.files[0]);
     }
-  }, [processFile]);
+  }, []);
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       processFile(e.target.files[0]);
     }
-  }, [processFile]);
+  }, []);
 
   const handleButtonClick = useCallback(() => {
     if (fileInputRef.current) {
@@ -239,6 +166,11 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed }) => {
                 <CheckCircle2 className="mr-1 h-3 w-3" /> Complete
               </span>
             )}
+            {currentStep === "error" && (
+              <span className="flex items-center text-destructive">
+                <AlertCircle className="mr-1 h-3 w-3" /> Error processing file
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -262,14 +194,14 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed }) => {
           onChange={handleFileChange}
           className="hidden"
           ref={fileInputRef}
-          accept=".log,.txt,.zip,.gz,.7z"
+          accept=".log,.txt,.zip,.gz"
         />
         <div className="w-16 h-16 mb-4 rounded-full bg-primary/10 flex items-center justify-center">
           <Upload className="h-8 w-8 text-primary" />
         </div>
         <h3 className="text-lg font-medium mb-2">Upload your log file</h3>
         <p className="text-muted-foreground mb-4 text-sm max-w-md mx-auto">
-          Drag & drop your .log, .txt, .zip, .gz, or .7z file
+          Drag & drop your .log, .txt, .zip, or .gz file
         </p>
         <Button variant="outline" size="sm" className="group">
           <Upload className="mr-2 h-4 w-4 group-hover:translate-y-[-2px] transition-transform" />
