@@ -14,10 +14,19 @@ import {
   LineChart as LineChartIcon, BarChart as BarChartIcon,
   Clock, CalendarRange, ChevronRight, ChevronLeft
 } from 'lucide-react';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+  PaginationEllipsis
+} from "@/components/ui/pagination";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { RegexPattern } from "../regex/RegexManager";
 import { cn } from "@/lib/utils";
-import { format, addHours, subHours, startOfHour, endOfHour } from 'date-fns';
+import { format, addHours, subHours, startOfHour, endOfHour, addDays, subDays } from 'date-fns';
 
 interface LogData {
   timestamp: Date;
@@ -57,8 +66,9 @@ const CHART_COLORS = [
 ];
 
 // Sampling constants for large datasets
-const MAX_CHART_POINTS = 2000; // Default max points to display
-const MAX_VISIBLE_POINTS = 500; // Max points in a zoomed view
+const MAX_CHART_POINTS = 5000; // Increased from 2000 to 5000 default points
+const MAX_VISIBLE_POINTS = 1000; // Increased from 500 to 1000 points in a zoomed view
+const MAX_CHART_POINTS_LIMIT = 50000; // Maximum points that can be configured
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
@@ -86,6 +96,8 @@ const TIME_RANGE_PRESETS = [
   { label: 'Last 6 hours', value: '6h', getRange: (now: Date) => ({ start: subHours(now, 6), end: now }) },
   { label: 'Last 12 hours', value: '12h', getRange: (now: Date) => ({ start: subHours(now, 12), end: now }) },
   { label: 'Last 24 hours', value: '24h', getRange: (now: Date) => ({ start: subHours(now, 24), end: now }) },
+  { label: 'Last 3 days', value: '3d', getRange: (now: Date) => ({ start: subDays(now, 3), end: now }) },
+  { label: 'Last 7 days', value: '7d', getRange: (now: Date) => ({ start: subDays(now, 7), end: now }) },
   { label: 'All data', value: 'all', getRange: () => ({ start: undefined, end: undefined }) },
 ];
 
@@ -98,7 +110,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   const [activeTab, setActiveTab] = useState<string>("panel-1");
   const [chartType, setChartType] = useState<'line' | 'bar'>('line');
   const [zoomDomain, setZoomDomain] = useState<{ start?: number, end?: number }>({});
-  const [dataStats, setDataStats] = useState<{ total: number, displayed: number, samplingRate: number }>({ 
+  const [dataStats, setDataStats] = useState<{ total: number, displayed: number, samplingRate: number, currentPage?: number, totalPages?: number }>({ 
     total: 0, 
     displayed: 0, 
     samplingRate: 1 
@@ -108,14 +120,14 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   const [maxDisplayPoints, setMaxDisplayPoints] = useState<number>(MAX_CHART_POINTS);
   const [timeRangePreset, setTimeRangePreset] = useState<string>('all');
   const [customTimeRange, setCustomTimeRange] = useState<{ start?: Date, end?: Date }>({});
+  const [currentPage, setCurrentPage] = useState<number>(1);
   const containerRef = useRef<HTMLDivElement>(null);
   const [rawLogSample, setRawLogSample] = useState<string[]>([]);
   const [stringValueMap, setStringValueMap] = useState<Record<string, Record<string, number>>>({});
   const [dataRange, setDataRange] = useState<{ min?: Date, max?: Date }>({});
+  const [timeNavigation, setTimeNavigation] = useState<'preset' | 'pagination' | 'window'>('preset');
+  const [timeWindowSize, setTimeWindowSize] = useState<number>(24); // Default 24 hours window
   
-  // Memoize the chart data to improve performance
-  const memoizedChartData = useMemo(() => displayedChartData, [displayedChartData]);
-
   // Process log data in chunks using a worker
   useEffect(() => {
     if (!logContent || patterns.length === 0) return;
@@ -138,82 +150,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       setIsProcessing(false);
     }
   }, [logContent, patterns]);
-
-  // Create a sampled version of the data for display when data is large
-  useEffect(() => {
-    if (formattedChartData.length > 0) {
-      setProcessingStatus("Preparing chart data for display");
-      
-      // Use setTimeout to prevent UI freezing
-      setTimeout(() => {
-        try {
-          const total = formattedChartData.length;
-          let sampled;
-          let samplingRate = 1;
-          
-          if (total > maxDisplayPoints) {
-            // For large datasets, use sampling to reduce points
-            samplingRate = Math.ceil(total / maxDisplayPoints);
-            sampled = formattedChartData.filter((_, i) => i % samplingRate === 0);
-            
-            console.log(`Sampled data from ${total} to ${sampled.length} points (rate: 1/${samplingRate})`);
-            setDataStats({ total, displayed: sampled.length, samplingRate });
-            
-            toast.info(`Displaying ${sampled.length.toLocaleString()} of ${total.toLocaleString()} data points for performance`);
-          } else {
-            sampled = formattedChartData;
-            setDataStats({ total, displayed: total, samplingRate: 1 });
-          }
-          
-          // Set the data range for time navigation
-          if (formattedChartData.length > 0) {
-            const timestamps = formattedChartData.map(item => item.timestamp);
-            const minTime = new Date(Math.min(...timestamps));
-            const maxTime = new Date(Math.max(...timestamps));
-            setDataRange({ min: minTime, max: maxTime });
-          }
-          
-          setDisplayedChartData(sampled);
-          setProcessingStatus("");
-          setIsProcessing(false);
-        } catch (error) {
-          console.error("Error preparing chart data:", error);
-          toast.error("Error preparing chart data");
-          setIsProcessing(false);
-          setProcessingStatus("");
-        }
-      }, 100);
-    }
-  }, [formattedChartData, maxDisplayPoints]);
-
-  const formatChartData = useCallback((data: LogData[]) => {
-    const formattedData = data.map(item => {
-      const dataPoint: any = {
-        timestamp: item.timestamp.getTime(),
-      };
-
-      // Process each value, converting strings to their numeric equivalents
-      Object.entries(item.values).forEach(([key, value]) => {
-        if (typeof value === 'string') {
-          // If this is a string value, use its numeric mapping
-          if (stringValueMap[key]) {
-            dataPoint[key] = stringValueMap[key][value];
-            // Also store the original string value for tooltip display
-            dataPoint[`${key}_original`] = value;
-          } else {
-            dataPoint[key] = 0;
-          }
-        } else {
-          dataPoint[key] = value;
-        }
-      });
-
-      return dataPoint;
-    });
-
-    console.log(`Formatted ${formattedData.length} data points`);
-    return formattedData;
-  }, [stringValueMap]);
 
   // Break the processing into chunks to prevent UI freezing
   const processLogDataInChunks = useCallback((content: string, regexPatterns: RegexPattern[]) => {
@@ -365,11 +301,8 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
             // Set chart data in a separate tick to avoid UI freeze
             setChartData(parsedData);
             
-            // Schedule formatting in a separate tick
-            setTimeout(() => {
-              const formatted = formatChartData(parsedData);
-              setFormattedChartData(formatted);
-            }, 100);
+            // Format data efficiently without recursive calls
+            formatChartDataAsync(parsedData);
           }
         } catch (error) {
           console.error("Error finalizing data:", error);
@@ -382,7 +315,130 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     
     // Start processing the first chunk
     processChunk();
-  }, [formatChartData]);
+  }, []);
+
+  // Format chart data asynchronously to avoid stack overflow
+  const formatChartDataAsync = useCallback((data: LogData[]) => {
+    setProcessingStatus("Formatting data (this may take a moment for large datasets)");
+    
+    // Use a worker pattern with setTimeout to prevent stack overflow
+    const BATCH_SIZE = 10000; // Process data in smaller batches
+    const result: any[] = [];
+    let index = 0;
+    
+    function processBatch() {
+      const end = Math.min(index + BATCH_SIZE, data.length);
+      
+      // Process this batch
+      for (let i = index; i < end; i++) {
+        const item = data[i];
+        const dataPoint: any = {
+          timestamp: item.timestamp.getTime(),
+        };
+        
+        // Process each value, converting strings to their numeric equivalents
+        Object.entries(item.values).forEach(([key, value]) => {
+          if (typeof value === 'string') {
+            // If this is a string value, use its numeric mapping
+            if (stringValueMap[key]) {
+              dataPoint[key] = stringValueMap[key][value];
+              // Also store the original string value for tooltip display
+              dataPoint[`${key}_original`] = value;
+            } else {
+              dataPoint[key] = 0;
+            }
+          } else {
+            dataPoint[key] = value;
+          }
+        });
+        
+        result.push(dataPoint);
+      }
+      
+      // Update progress
+      const progress = Math.round((end / data.length) * 100);
+      setProcessingStatus(`Formatting data: ${progress}%`);
+      
+      // Move to the next batch or finish
+      index = end;
+      if (index < data.length) {
+        setTimeout(processBatch, 0);
+      } else {
+        // All done, prepare data for display
+        const formattedData = result;
+        
+        if (formattedData.length > 0) {
+          const timestamps = formattedData.map(item => item.timestamp);
+          const minTime = new Date(Math.min(...timestamps));
+          const maxTime = new Date(Math.max(...timestamps));
+          setDataRange({ min: minTime, max: maxTime });
+          
+          setFormattedChartData(formattedData);
+          prepareDisplayData(formattedData);
+        } else {
+          setIsProcessing(false);
+          setProcessingStatus("");
+        }
+      }
+    }
+    
+    // Start processing the first batch
+    processBatch();
+  }, [stringValueMap]);
+  
+  // Prepare display data with sampling
+  const prepareDisplayData = useCallback((data: any[]) => {
+    setProcessingStatus("Preparing chart data for display");
+    
+    // Use setTimeout to prevent UI freezing
+    setTimeout(() => {
+      try {
+        const total = data.length;
+        let sampled;
+        let samplingRate = 1;
+        
+        if (total > maxDisplayPoints) {
+          // For large datasets, use sampling to reduce points
+          samplingRate = Math.ceil(total / maxDisplayPoints);
+          sampled = data.filter((_, i) => i % samplingRate === 0);
+          
+          console.log(`Sampled data from ${total} to ${sampled.length} points (rate: 1/${samplingRate})`);
+          setDataStats({ 
+            total, 
+            displayed: sampled.length, 
+            samplingRate, 
+            currentPage: 1, 
+            totalPages: Math.ceil(total / maxDisplayPoints) 
+          });
+          
+          // Setup pagination if needed
+          if (timeNavigation === 'pagination') {
+            setCurrentPage(1);
+          }
+          
+          toast.info(`Displaying ${sampled.length.toLocaleString()} of ${total.toLocaleString()} data points for performance`);
+        } else {
+          sampled = data;
+          setDataStats({ 
+            total, 
+            displayed: total, 
+            samplingRate: 1,
+            currentPage: 1,
+            totalPages: 1
+          });
+        }
+        
+        setDisplayedChartData(sampled);
+        setProcessingStatus("");
+        setIsProcessing(false);
+      } catch (error) {
+        console.error("Error preparing chart data:", error);
+        toast.error("Error preparing chart data");
+        setIsProcessing(false);
+        setProcessingStatus("");
+      }
+    }, 0);
+  }, [maxDisplayPoints, timeNavigation]);
 
   // Apply time range filtering to the data
   const applyTimeRangeFilter = useCallback((data: any[], timeRange: { start?: Date | number, end?: Date | number }) => {
@@ -409,10 +465,10 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   // Calculate visible data based on zoom domain and time range
   const getVisibleData = useCallback(() => {
     // Apply time range filter first
-    let filteredData = memoizedChartData;
+    let filteredData = formattedChartData;
     
     if (customTimeRange.start || customTimeRange.end) {
-      filteredData = applyTimeRangeFilter(memoizedChartData, customTimeRange);
+      filteredData = applyTimeRangeFilter(formattedChartData, customTimeRange);
     }
     
     // Then apply zoom if needed
@@ -429,10 +485,44 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }
     
     return filteredData;
-  }, [memoizedChartData, zoomDomain, customTimeRange, applyTimeRangeFilter]);
+  }, [formattedChartData, zoomDomain, customTimeRange, applyTimeRangeFilter]);
 
-  // Memoize the visible data to improve performance
-  const visibleChartData = useMemo(() => getVisibleData(), [getVisibleData]);
+  // Handle pagination
+  const handlePageChange = useCallback((page: number) => {
+    if (!dataStats.totalPages) return;
+    
+    if (page < 1) page = 1;
+    if (page > dataStats.totalPages) page = dataStats.totalPages;
+    
+    setCurrentPage(page);
+    
+    // Calculate the data slice for this page
+    const pageSize = maxDisplayPoints;
+    const startIndex = (page - 1) * pageSize;
+    const endIndex = Math.min(startIndex + pageSize, formattedChartData.length);
+    
+    // Get data for this page
+    const pageData = formattedChartData.slice(startIndex, endIndex);
+    
+    // Update displayed data and stats
+    setDisplayedChartData(pageData);
+    setDataStats({
+      ...dataStats,
+      currentPage: page,
+      displayed: pageData.length
+    });
+    
+    // If we have time range data, update the custom range
+    if (dataRange.min && dataRange.max && formattedChartData.length > 0) {
+      // Set custom time range to this page's date range
+      const pageStartTime = new Date(pageData[0].timestamp);
+      const pageEndTime = new Date(pageData[pageData.length - 1].timestamp);
+      setCustomTimeRange({ start: pageStartTime, end: pageEndTime });
+    }
+    
+    // Reset zoom when changing pages
+    setZoomDomain({});
+  }, [dataStats, maxDisplayPoints, formattedChartData, dataRange]);
 
   // Function to navigate through time periods
   const navigateTime = useCallback((direction: 'forward' | 'backward') => {
@@ -467,13 +557,84 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }
   }, [customTimeRange, dataRange]);
 
+  // Handle time window navigation
+  const navigateTimeWindow = useCallback((direction: 'forward' | 'backward') => {
+    if (!dataRange.min || !dataRange.max) return;
+    
+    // Calculate window size in milliseconds
+    const windowMs = timeWindowSize * 60 * 60 * 1000; // hours to ms
+    
+    let newStart, newEnd;
+    
+    if (!customTimeRange.start || !customTimeRange.end) {
+      // If no current range, start from the end of data and move backward
+      newEnd = dataRange.max;
+      newStart = new Date(newEnd.getTime() - windowMs);
+    } else {
+      // Move window forward or backward
+      if (direction === 'forward') {
+        newStart = new Date(customTimeRange.end.getTime());
+        newEnd = new Date(newStart.getTime() + windowMs);
+        
+        // Don't go beyond the available data
+        if (newEnd > dataRange.max) {
+          newEnd = dataRange.max;
+          newStart = new Date(newEnd.getTime() - windowMs);
+        }
+      } else {
+        newEnd = new Date(customTimeRange.start.getTime());
+        newStart = new Date(newEnd.getTime() - windowMs);
+        
+        // Don't go before the available data
+        if (newStart < dataRange.min) {
+          newStart = dataRange.min;
+          newEnd = new Date(newStart.getTime() + windowMs);
+        }
+      }
+    }
+    
+    setCustomTimeRange({ start: newStart, end: newEnd });
+    // Reset zoom when changing time window
+    setZoomDomain({});
+  }, [customTimeRange, dataRange, timeWindowSize]);
+
+  // Effect to update displayed data when time range changes
+  useEffect(() => {
+    if (timeNavigation === 'window' && customTimeRange.start && customTimeRange.end) {
+      // Filter data by current time window
+      const filteredData = applyTimeRangeFilter(formattedChartData, customTimeRange);
+      
+      // Apply sampling if needed
+      let sampledData = filteredData;
+      let samplingRate = 1;
+      
+      if (filteredData.length > maxDisplayPoints) {
+        samplingRate = Math.ceil(filteredData.length / maxDisplayPoints);
+        sampledData = filteredData.filter((_, i) => i % samplingRate === 0);
+      }
+      
+      setDisplayedChartData(sampledData);
+      setDataStats({
+        total: formattedChartData.length,
+        displayed: sampledData.length,
+        samplingRate,
+        currentPage: 1,
+        totalPages: Math.ceil(formattedChartData.length / maxDisplayPoints)
+      });
+    }
+  }, [customTimeRange, timeNavigation, formattedChartData, maxDisplayPoints, applyTimeRangeFilter]);
+
   // Handle time range preset selection
   const handleTimeRangePresetChange = useCallback((preset: string) => {
     setTimeRangePreset(preset);
     setZoomDomain({}); // Reset zoom when changing time range
     
     if (preset === 'all') {
+      setTimeNavigation('preset');
       setCustomTimeRange({});
+      
+      // Show full dataset with sampling
+      prepareDisplayData(formattedChartData);
     } else if (preset === 'custom') {
       // Keep current custom range if it exists
       if (!customTimeRange.start || !customTimeRange.end) {
@@ -484,8 +645,24 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
           setCustomTimeRange({ start, end });
         }
       }
+    } else if (preset === 'window') {
+      setTimeNavigation('window');
+      
+      // Set initial window to last N hours of data
+      if (dataRange.max) {
+        const end = dataRange.max;
+        const start = subHours(end, timeWindowSize);
+        setCustomTimeRange({ start, end });
+      }
+    } else if (preset === 'pagination') {
+      setTimeNavigation('pagination');
+      setCustomTimeRange({});
+      
+      // Start at page 1
+      handlePageChange(1);
     } else {
       // Apply one of the standard presets
+      setTimeNavigation('preset');
       const presetConfig = TIME_RANGE_PRESETS.find(p => p.value === preset);
       if (presetConfig && dataRange.max) {
         const range = presetConfig.getRange(dataRange.max);
@@ -496,7 +673,18 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         setCustomTimeRange(range);
       }
     }
-  }, [customTimeRange, dataRange]);
+  }, [customTimeRange, dataRange, timeWindowSize, formattedChartData, prepareDisplayData, handlePageChange]);
+
+  // Memoize the visible data to improve performance
+  const visibleChartData = useMemo(() => {
+    // If we're in pagination mode, just use the current displayed data
+    if (timeNavigation === 'pagination') {
+      return displayedChartData;
+    }
+    
+    // Otherwise, calculate the visible data based on filters
+    return getVisibleData();
+  }, [getVisibleData, displayedChartData, timeNavigation]);
 
   const handleAddPanel = useCallback(() => {
     const newPanelId = `panel-${panels.length + 1}`;
@@ -584,6 +772,8 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     setDataStats({ total: 0, displayed: 0, samplingRate: 1 });
     setCustomTimeRange({});
     setTimeRangePreset('all');
+    setTimeNavigation('preset');
+    setCurrentPage(1);
     toast.success("Reset all data and settings");
   }, []);
 
@@ -601,27 +791,17 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         // Use setTimeout to prevent UI freezing
         setTimeout(() => {
           try {
-            const total = formattedChartData.length;
-            let sampled;
-            let samplingRate = 1;
-            
-            if (total > newMaxPoints) {
-              // For large datasets, use sampling to reduce points
-              samplingRate = Math.ceil(total / newMaxPoints);
-              sampled = formattedChartData.filter((_, i) => i % samplingRate === 0);
+            if (timeNavigation === 'pagination') {
+              // Update page size and recalculate pages
+              const totalPages = Math.ceil(formattedChartData.length / newMaxPoints);
+              setDataStats(prev => ({ ...prev, totalPages }));
               
-              console.log(`Resampled data from ${total} to ${sampled.length} points (rate: 1/${samplingRate})`);
-              setDataStats({ total, displayed: sampled.length, samplingRate });
-              
-              toast.info(`Now displaying ${sampled.length.toLocaleString()} of ${total.toLocaleString()} data points`);
+              // Stay on current page but adjust the data window
+              handlePageChange(currentPage);
             } else {
-              sampled = formattedChartData;
-              setDataStats({ total, displayed: total, samplingRate: 1 });
+              // Just resample the currently displayed data
+              prepareDisplayData(formattedChartData);
             }
-            
-            setDisplayedChartData(sampled);
-            setProcessingStatus("");
-            setIsProcessing(false);
           } catch (error) {
             console.error("Error resampling data:", error);
             toast.error("Error resampling data");
@@ -631,7 +811,20 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         }, 0);
       }
     }
-  }, [maxDisplayPoints, formattedChartData]);
+  }, [maxDisplayPoints, formattedChartData, timeNavigation, handlePageChange, currentPage, prepareDisplayData]);
+
+  // Handle time window size change
+  const handleWindowSizeChange = useCallback((value: number[]) => {
+    const newSize = value[0];
+    setTimeWindowSize(newSize);
+    
+    // Update the time window with the new size
+    if (timeNavigation === 'window' && customTimeRange.end) {
+      const end = customTimeRange.end;
+      const start = subHours(end, newSize);
+      setCustomTimeRange({ start, end });
+    }
+  }, [timeNavigation, customTimeRange]);
 
   // Memoize the line chart component to improve performance
   const renderLineChart = useCallback((panelId: string) => {
@@ -743,6 +936,78 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     );
   }, [visibleChartData, zoomDomain, formatXAxis, getPanelSignals]);
 
+  // Rendering pagination controls
+  const renderPagination = useCallback(() => {
+    if (!dataStats.totalPages || dataStats.totalPages <= 1) return null;
+    
+    // Calculate the page numbers to display
+    const currentPage = dataStats.currentPage || 1;
+    const totalPages = dataStats.totalPages;
+    
+    let pageNumbers = [];
+    if (totalPages <= 7) {
+      // Show all pages if there are 7 or fewer
+      pageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1);
+    } else {
+      // Show first, last, current, and pages around current
+      if (currentPage <= 3) {
+        // Near start
+        pageNumbers = [1, 2, 3, 4, 5, 'ellipsis', totalPages];
+      } else if (currentPage >= totalPages - 2) {
+        // Near end
+        pageNumbers = [1, 'ellipsis', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+      } else {
+        // Somewhere in the middle
+        pageNumbers = [1, 'ellipsis', currentPage - 1, currentPage, currentPage + 1, 'ellipsis', totalPages];
+      }
+    }
+    
+    return (
+      <Pagination className="mt-4">
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious 
+              href="#" 
+              onClick={(e) => {
+                e.preventDefault();
+                handlePageChange(currentPage - 1);
+              }} 
+            />
+          </PaginationItem>
+          
+          {pageNumbers.map((page, i) => (
+            <PaginationItem key={i}>
+              {page === 'ellipsis' ? (
+                <PaginationEllipsis />
+              ) : (
+                <PaginationLink 
+                  href="#" 
+                  isActive={page === currentPage}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handlePageChange(page as number);
+                  }}
+                >
+                  {page}
+                </PaginationLink>
+              )}
+            </PaginationItem>
+          ))}
+          
+          <PaginationItem>
+            <PaginationNext 
+              href="#" 
+              onClick={(e) => {
+                e.preventDefault();
+                handlePageChange(currentPage + 1);
+              }} 
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    );
+  }, [dataStats, handlePageChange]);
+
   return (
     <div className={cn("space-y-4", className)} ref={containerRef}>
       {signals.length > 0 ? (
@@ -843,18 +1108,32 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                 <CardTitle className="text-sm font-medium">Time Range Selection</CardTitle>
                 <div className="flex items-center gap-2">
                   <Select 
-                    value={timeRangePreset} 
-                    onValueChange={handleTimeRangePresetChange}
+                    value={timeNavigation === 'preset' ? timeRangePreset : 
+                           timeNavigation === 'pagination' ? 'pagination' : 
+                           timeNavigation === 'window' ? 'window' : 'custom'} 
+                    onValueChange={(value) => {
+                      if (value === 'pagination') {
+                        handleTimeRangePresetChange('pagination');
+                      } else if (value === 'window') {
+                        handleTimeRangePresetChange('window');
+                      } else {
+                        handleTimeRangePresetChange(value);
+                      }
+                    }}
                   >
-                    <SelectTrigger className="w-[130px] h-8">
+                    <SelectTrigger className="w-[150px] h-8">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {TIME_RANGE_PRESETS.map((preset) => (
-                        <SelectItem key={preset.value} value={preset.value}>
-                          {preset.label}
-                        </SelectItem>
-                      ))}
+                      <SelectItem value="all">All Data</SelectItem>
+                      <SelectItem value="1h">Last Hour</SelectItem>
+                      <SelectItem value="6h">Last 6 Hours</SelectItem>
+                      <SelectItem value="12h">Last 12 Hours</SelectItem>
+                      <SelectItem value="24h">Last 24 Hours</SelectItem>
+                      <SelectItem value="3d">Last 3 Days</SelectItem>
+                      <SelectItem value="7d">Last 7 Days</SelectItem>
+                      <SelectItem value="window">Sliding Window</SelectItem>
+                      <SelectItem value="pagination">Page by Page</SelectItem>
                       <SelectItem value="custom">Custom Range</SelectItem>
                     </SelectContent>
                   </Select>
@@ -880,7 +1159,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                   <Slider
                     value={[maxDisplayPoints]}
                     min={500}
-                    max={10000}
+                    max={MAX_CHART_POINTS_LIMIT}
                     step={500}
                     onValueChange={handleMaxPointsChange}
                   />
@@ -890,7 +1169,85 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                 </div>
               </div>
               
-              {timeRangePreset === 'custom' && customTimeRange.start && customTimeRange.end && (
+              {timeNavigation === 'window' && (
+                <div className="mt-4 pt-4 border-t">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex items-center gap-2">
+                      <CalendarRange className="h-4 w-4 text-muted-foreground" />
+                      <div className="text-sm">
+                        <p className="font-medium">Time Window Size</p>
+                        <p className="text-xs text-muted-foreground">
+                          Set how many hours to show at once
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Slider
+                        value={[timeWindowSize]}
+                        min={1}
+                        max={72}
+                        step={1}
+                        onValueChange={handleWindowSizeChange}
+                      />
+                      <div className="text-xs text-center text-muted-foreground">
+                        Window size: {timeWindowSize} hour{timeWindowSize > 1 ? 's' : ''}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center justify-between mt-4">
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigateTimeWindow('backward')}
+                        className="h-8"
+                      >
+                        <ChevronLeft className="h-4 w-4 mr-1" />
+                        Previous
+                      </Button>
+                    </div>
+                    
+                    {customTimeRange.start && customTimeRange.end && (
+                      <div className="text-xs text-center">
+                        {formatTimeLabel(customTimeRange.start)} - {formatTimeLabel(customTimeRange.end)}
+                      </div>
+                    )}
+                    
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigateTimeWindow('forward')}
+                        className="h-8"
+                      >
+                        Next
+                        <ChevronRight className="h-4 w-4 ml-1" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {timeNavigation === 'pagination' && (
+                <div className="mt-4 pt-4 border-t">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-medium">
+                      Page Navigation
+                    </div>
+                    
+                    {dataStats.currentPage && dataStats.totalPages && (
+                      <div className="text-xs text-muted-foreground">
+                        Page {dataStats.currentPage} of {dataStats.totalPages}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {renderPagination()}
+                </div>
+              )}
+              
+              {(timeNavigation === 'preset' || timeNavigation === 'custom') && customTimeRange.start && customTimeRange.end && (
                 <div className="mt-4 border-t pt-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
@@ -924,12 +1281,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                       To: {formatTimeLabel(customTimeRange.end)}
                     </div>
                   </div>
-                </div>
-              )}
-              
-              {timeRangePreset !== 'all' && timeRangePreset !== 'custom' && (
-                <div className="mt-2 text-xs text-muted-foreground">
-                  {TIME_RANGE_PRESETS.find(p => p.value === timeRangePreset)?.label} view activated
                 </div>
               )}
             </CardContent>
