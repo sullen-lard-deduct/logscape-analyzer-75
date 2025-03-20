@@ -7,6 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import JSZip from "jszip";
 import * as pako from "pako";
+import * as lzma from "lzma-native";
 
 interface FileUploaderProps {
   onFileProcessed: (content: string) => void;
@@ -24,7 +25,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isValidFileType = (fileName: string): boolean => {
-    const supportedExtensions = [".log", ".txt", ".zip", ".gz"];
+    const supportedExtensions = [".log", ".txt", ".zip", ".gz", ".7z"];
     return supportedExtensions.some(ext => 
       fileName.toLowerCase().endsWith(ext)
     );
@@ -109,6 +110,31 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
     }
   };
 
+  const decompress7z = async (file: File): Promise<string> => {
+    try {
+      const arrayBuffer = await readAsArrayBuffer(file);
+      const buffer = Buffer.from(arrayBuffer);
+      
+      // Decompress the 7z file
+      const decompressed = await new Promise<string>((resolve, reject) => {
+        lzma.decompress(buffer, (result, error) => {
+          if (error) {
+            reject(new Error("Failed to decompress 7z file"));
+          } else if (result instanceof Buffer) {
+            resolve(result.toString('utf8'));
+          } else {
+            reject(new Error("Unexpected decompression result"));
+          }
+        });
+      });
+      
+      return decompressed;
+    } catch (error) {
+      console.error("Failed to decompress 7z file:", error);
+      throw new Error("Failed to extract log file from the 7z archive. It may be corrupted or not a valid 7z file.");
+    }
+  };
+
   const processLogFile = async (file: File): Promise<string> => {
     setCurrentStep("decompressing");
 
@@ -119,6 +145,8 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
       content = await decompressGzip(file);
     } else if (fileName.endsWith('.zip')) {
       content = await decompressZip(file);
+    } else if (fileName.endsWith('.7z')) {
+      content = await decompress7z(file);
     } else {
       // Regular .log or .txt file
       content = await readAsText(file);
@@ -215,14 +243,14 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
             onChange={handleFileChange}
             className="hidden"
             ref={fileInputRef}
-            accept=".log,.txt,.zip,.gz"
+            accept=".log,.txt,.zip,.gz,.7z"
           />
           <div className="w-16 h-16 mb-4 rounded-full bg-primary/10 flex items-center justify-center">
             <Upload className="h-8 w-8 text-primary" />
           </div>
           <h3 className="text-lg font-medium mb-2">Upload your log file</h3>
           <p className="text-muted-foreground mb-4 text-sm max-w-md mx-auto">
-            Drag & drop your .log, .txt, .zip, or .gz file
+            Drag & drop your .log, .txt, .zip, .gz, or .7z file
           </p>
           <Button variant="outline" size="sm" className="group">
             <Upload className="mr-2 h-4 w-4 group-hover:translate-y-[-2px] transition-transform" />
