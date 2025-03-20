@@ -5,6 +5,8 @@ import { Upload, X, FileText, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import JSZip from "jszip";
+import * as pako from "pako";
 
 interface FileUploaderProps {
   onFileProcessed: (content: string) => void;
@@ -12,7 +14,7 @@ interface FileUploaderProps {
 }
 
 type UploadStatus = "idle" | "uploading" | "processing" | "error" | "success";
-type ProcessStep = "uploading" | "validating" | "analyzing";
+type ProcessStep = "uploading" | "validating" | "analyzing" | "decompressing";
 
 const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className }) => {
   const [file, setFile] = useState<File | null>(null);
@@ -21,9 +23,9 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
   const [currentStep, setCurrentStep] = useState<ProcessStep>("uploading");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const isLogFile = (fileName: string): boolean => {
-    const logExtensions = [".log", ".txt"];
-    return logExtensions.some(ext => 
+  const isValidFileType = (fileName: string): boolean => {
+    const supportedExtensions = [".log", ".txt", ".zip", ".gz"];
+    return supportedExtensions.some(ext => 
       fileName.toLowerCase().endsWith(ext)
     );
   };
@@ -38,10 +40,9 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
     }
   };
 
-  const processLogFile = (file: File): Promise<string> => {
+  const readAsText = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      
       reader.onload = (event) => {
         if (event.target?.result) {
           resolve(event.target.result as string);
@@ -49,13 +50,81 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
           reject(new Error("Failed to read file"));
         }
       };
-      
       reader.onerror = () => {
         reject(new Error("Error reading file"));
       };
-      
       reader.readAsText(file);
     });
+  };
+
+  const readAsArrayBuffer = (file: File): Promise<ArrayBuffer> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          resolve(event.target.result as ArrayBuffer);
+        } else {
+          reject(new Error("Failed to read file"));
+        }
+      };
+      reader.onerror = () => {
+        reject(new Error("Error reading file"));
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  const decompressGzip = async (file: File): Promise<string> => {
+    try {
+      const arrayBuffer = await readAsArrayBuffer(file);
+      const decompressed = pako.inflate(new Uint8Array(arrayBuffer), { to: 'string' });
+      return decompressed;
+    } catch (error) {
+      console.error("Failed to decompress gzip file:", error);
+      throw new Error("Failed to decompress the gzip file. It may be corrupted or not a valid gzip file.");
+    }
+  };
+
+  const decompressZip = async (file: File): Promise<string> => {
+    try {
+      const arrayBuffer = await readAsArrayBuffer(file);
+      const zip = new JSZip();
+      const zipContents = await zip.loadAsync(arrayBuffer);
+      
+      // Find the first .log or .txt file in the zip
+      const logFiles = Object.keys(zipContents.files).filter(
+        fileName => fileName.endsWith('.log') || fileName.endsWith('.txt')
+      );
+      
+      if (logFiles.length === 0) {
+        throw new Error("No log files found in the zip archive");
+      }
+      
+      // Use the first log file found
+      const logFileContent = await zipContents.files[logFiles[0]].async("string");
+      return logFileContent;
+    } catch (error) {
+      console.error("Failed to decompress zip file:", error);
+      throw new Error("Failed to extract log file from the zip archive. It may be corrupted or not contain valid log files.");
+    }
+  };
+
+  const processLogFile = async (file: File): Promise<string> => {
+    setCurrentStep("decompressing");
+
+    let content: string;
+    const fileName = file.name.toLowerCase();
+    
+    if (fileName.endsWith('.gz')) {
+      content = await decompressGzip(file);
+    } else if (fileName.endsWith('.zip')) {
+      content = await decompressZip(file);
+    } else {
+      // Regular .log or .txt file
+      content = await readAsText(file);
+    }
+    
+    return content;
   };
 
   const simulateFileProcessing = async (file: File) => {
@@ -72,15 +141,15 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
       setCurrentStep("validating");
       await new Promise(r => setTimeout(r, 500));
       
-      // Check if file is a valid log file
-      if (!isLogFile(file.name)) {
-        throw new Error("Please upload a log file (.log or .txt)");
+      // Check if file is a valid file type
+      if (!isValidFileType(file.name)) {
+        throw new Error("Please upload a supported file type (.log, .txt, .zip, or .gz)");
       }
       
       setCurrentStep("analyzing");
       await new Promise(r => setTimeout(r, 700));
       
-      // Actually read the file content
+      // Actually read and process the file content
       const content = await processLogFile(file);
       
       // Validate that the file has the expected timestamp format
@@ -124,6 +193,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
     switch (currentStep) {
       case "uploading": return "Uploading file...";
       case "validating": return "Validating file format...";
+      case "decompressing": return "Decompressing file...";
       case "analyzing": return "Analyzing log data...";
       default: return "Processing...";
     }
@@ -145,14 +215,14 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed, className 
             onChange={handleFileChange}
             className="hidden"
             ref={fileInputRef}
-            accept=".log,.txt"
+            accept=".log,.txt,.zip,.gz"
           />
           <div className="w-16 h-16 mb-4 rounded-full bg-primary/10 flex items-center justify-center">
             <Upload className="h-8 w-8 text-primary" />
           </div>
           <h3 className="text-lg font-medium mb-2">Upload your log file</h3>
           <p className="text-muted-foreground mb-4 text-sm max-w-md mx-auto">
-            Drag & drop your .log or .txt file
+            Drag & drop your .log, .txt, .zip, or .gz file
           </p>
           <Button variant="outline" size="sm" className="group">
             <Upload className="mr-2 h-4 w-4 group-hover:translate-y-[-2px] transition-transform" />

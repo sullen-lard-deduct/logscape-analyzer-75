@@ -63,8 +63,8 @@ const CustomTooltip = ({ active, payload, label }: any) => {
           <div key={`tooltip-${index}`} className="flex items-center gap-2 py-0.5">
             <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
             <span className="font-medium">{entry.name}:</span>
-            <span>{typeof entry.payload[entry.name] === 'string' 
-              ? entry.payload[entry.name] 
+            <span>{typeof entry.payload[`${entry.name}_original`] === 'string' 
+              ? entry.payload[`${entry.name}_original`] 
               : entry.value}</span>
           </div>
         ))}
@@ -120,13 +120,13 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       Object.entries(item.values).forEach(([key, value]) => {
         if (typeof value === 'string') {
           // If this is a string value, use its numeric mapping
-          if (!stringValueMap[key]) {
-            // This should never happen as we've already processed all string values
-            dataPoint[key] = 0;
-          } else {
+          if (stringValueMap[key]) {
             dataPoint[key] = stringValueMap[key][value];
             // Also store the original string value for tooltip display
             dataPoint[`${key}_original`] = value;
+          } else {
+            console.warn(`No string value mapping found for ${key}`);
+            dataPoint[key] = 0;
           }
         } else {
           dataPoint[key] = value;
@@ -137,6 +137,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     });
 
     setFormattedChartData(formattedData);
+    console.log("Formatted chart data:", formattedData.slice(0, 3));
   };
 
   const processLogData = (content: string, regexPatterns: RegexPattern[]) => {
@@ -164,6 +165,9 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     // Track unique string values for each signal
     const stringValues: Record<string, Set<string>> = {};
     
+    // Create a map to track the last seen values for each pattern
+    const lastSeenValues: Record<string, number | string> = {};
+    
     lines.forEach((line, lineIndex) => {
       if (!line.trim()) return;
       
@@ -185,6 +189,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
           }
           
           const values: { [key: string]: number | string } = {};
+          let hasNewValue = false;
           
           regexPatterns.forEach((pattern) => {
             try {
@@ -194,6 +199,8 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
               if (match && match[1] !== undefined) {
                 const value = isNaN(Number(match[1])) ? match[1] : Number(match[1]);
                 values[pattern.name] = value;
+                lastSeenValues[pattern.name] = value;
+                hasNewValue = true;
                 
                 // If string value, track it for numeric mapping
                 if (typeof value === 'string') {
@@ -211,7 +218,14 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
             }
           });
           
-          if (Object.keys(values).length > 0) {
+          // Copy last seen values for patterns not found in this line
+          regexPatterns.forEach((pattern) => {
+            if (!(pattern.name in values) && pattern.name in lastSeenValues) {
+              values[pattern.name] = lastSeenValues[pattern.name];
+            }
+          });
+          
+          if (Object.keys(values).length > 0 && hasNewValue) {
             parsedData.push({ timestamp, values });
           }
         } catch (error) {
@@ -234,6 +248,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       Array.from(valueSet).sort().forEach((value, index) => {
         newStringValueMap[key][value] = index + 1; // Start from 1 to avoid zero values
       });
+      console.log(`Created mapping for ${key}:`, newStringValueMap[key]);
     });
     
     setStringValueMap(newStringValueMap);
@@ -543,7 +558,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                                 stroke="hsl(var(--primary))"
                                 fill="hsla(var(--primary), 0.1)"
                                 onChange={(e) => {
-                                  if (e.startIndex !== undefined && e.endIndex !== undefined) {
+                                  if (e.startIndex !== undefined && e.endIndex !== undefined && formattedChartData.length > 0) {
                                     const data = formattedChartData;
                                     setZoomDomain({
                                       start: data[e.startIndex]?.timestamp,
@@ -589,7 +604,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                                 stroke="hsl(var(--primary))"
                                 fill="hsla(var(--primary), 0.1)"
                                 onChange={(e) => {
-                                  if (e.startIndex !== undefined && e.endIndex !== undefined) {
+                                  if (e.startIndex !== undefined && e.endIndex !== undefined && formattedChartData.length > 0) {
                                     const data = formattedChartData;
                                     setZoomDomain({
                                       start: data[e.startIndex]?.timestamp,
