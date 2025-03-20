@@ -321,12 +321,14 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   const formatChartDataAsync = useCallback((data: LogData[]) => {
     setProcessingStatus("Formatting data (this may take a moment for large datasets)");
     
-    // Use a worker pattern with setTimeout to prevent stack overflow
+    // Use a worker pattern with setTimeout to prevent stack overflow with iterative approach
     const BATCH_SIZE = 10000; // Process data in smaller batches
     const result: any[] = [];
     let index = 0;
     
-    function processBatch() {
+    // Define the processBatch function outside of the recursive call
+    // This prevents stack overflow by using setTimeout for async processing
+    const processBatch = () => {
       const end = Math.min(index + BATCH_SIZE, data.length);
       
       // Process this batch
@@ -361,37 +363,40 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       
       // Move to the next batch or finish
       index = end;
+      
       if (index < data.length) {
-        setTimeout(processBatch, 0);
+        // Use window.setTimeout with 0 delay to avoid stack overflow
+        // This breaks the call stack chain and yields to the event loop
+        window.setTimeout(processBatch, 0);
       } else {
-        // All done, prepare data for display
-        const formattedData = result;
-        
-        if (formattedData.length > 0) {
-          const timestamps = formattedData.map(item => item.timestamp);
-          const minTime = new Date(Math.min(...timestamps));
-          const maxTime = new Date(Math.max(...timestamps));
-          setDataRange({ min: minTime, max: maxTime });
-          
-          setFormattedChartData(formattedData);
-          prepareDisplayData(formattedData);
-        } else {
-          setIsProcessing(false);
-          setProcessingStatus("");
-        }
+        // All done, prepare data for display with setTimeout to prevent UI freeze
+        window.setTimeout(() => {
+          if (result.length > 0) {
+            const timestamps = result.map(item => item.timestamp);
+            const minTime = new Date(Math.min(...timestamps));
+            const maxTime = new Date(Math.max(...timestamps));
+            setDataRange({ min: minTime, max: maxTime });
+            
+            setFormattedChartData(result);
+            prepareDisplayData(result);
+          } else {
+            setIsProcessing(false);
+            setProcessingStatus("");
+          }
+        }, 0);
       }
-    }
+    };
     
-    // Start processing the first batch
-    processBatch();
+    // Start processing the first batch with setTimeout
+    window.setTimeout(processBatch, 0);
   }, [stringValueMap]);
   
   // Prepare display data with sampling
   const prepareDisplayData = useCallback((data: any[]) => {
     setProcessingStatus("Preparing chart data for display");
     
-    // Use setTimeout to prevent UI freezing
-    setTimeout(() => {
+    // Use setTimeout to prevent UI freezing with an iterative approach
+    const prepareData = () => {
       try {
         const total = data.length;
         let sampled;
@@ -437,7 +442,10 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         setIsProcessing(false);
         setProcessingStatus("");
       }
-    }, 0);
+    };
+    
+    // Use window.setTimeout to break the call stack chain
+    window.setTimeout(prepareData, 0);
   }, [maxDisplayPoints, timeNavigation]);
 
   // Apply time range filtering to the data
