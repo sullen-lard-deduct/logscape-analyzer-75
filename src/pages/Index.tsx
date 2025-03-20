@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+
+import React, { useState, useCallback } from "react";
 import { toast } from "sonner";
 import { FileText, Wand, RefreshCcw } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
@@ -14,24 +15,25 @@ const Index = () => {
   const [selectedPatterns, setSelectedPatterns] = useState<RegexPattern[]>([]);
   const [activeTab, setActiveTab] = useState<string>("upload");
 
-  const handleFileProcessed = (content: string) => {
+  const handleFileProcessed = useCallback((content: string) => {
+    // Reset state when a new file is uploaded
     setLogContent(content);
     setSelectedPatterns([]);
     setActiveTab("patterns");
     toast.success("Log file successfully processed");
-  };
+  }, []);
 
-  const handleApplyPattern = (patterns: RegexPattern[]) => {
+  const handleApplyPattern = useCallback((patterns: RegexPattern[]) => {
     setSelectedPatterns(patterns);
     setActiveTab("analysis");
-  };
+  }, []);
 
-  const handleResetAll = () => {
+  const handleResetAll = useCallback(() => {
     setLogContent("");
     setSelectedPatterns([]);
     setActiveTab("upload");
     toast.success("All data has been reset");
-  };
+  }, []);
 
   return (
     <AppLayout>
@@ -90,7 +92,7 @@ const Index = () => {
             <CardHeader>
               <CardTitle>Upload Log File</CardTitle>
               <CardDescription>
-                Upload a log file (.log, .txt, .zip, or .gz) to analyze patterns and visualize data.
+                Upload a log file (.log, .txt, .zip, .gz, or .7z) to analyze patterns and visualize data.
               </CardDescription>
             </CardHeader>
             <CardContent>
