@@ -65,7 +65,6 @@ const CHART_COLORS = [
   '#0EA5E9', // sky
 ];
 
-// Sampling constants for large datasets
 const MAX_CHART_POINTS = 5000; // Increased from 2000 to 5000 default points
 const MAX_VISIBLE_POINTS = 1000; // Increased from 500 to 1000 points in a zoomed view
 const MAX_CHART_POINTS_LIMIT = 50000; // Maximum points that can be configured
@@ -90,7 +89,6 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-// Time range presets for quick selection
 const TIME_RANGE_PRESETS = [
   { label: 'Last hour', value: '1h', getRange: (now: Date) => ({ start: subHours(now, 1), end: now }) },
   { label: 'Last 6 hours', value: '6h', getRange: (now: Date) => ({ start: subHours(now, 6), end: now }) },
@@ -128,7 +126,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   const [timeNavigation, setTimeNavigation] = useState<'preset' | 'pagination' | 'window'>('preset');
   const [timeWindowSize, setTimeWindowSize] = useState<number>(24); // Default 24 hours window
   
-  // Process log data in chunks using a worker
   useEffect(() => {
     if (!logContent || patterns.length === 0) return;
     
@@ -141,7 +138,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       console.log("Processing log data with patterns:", patterns);
       console.log(`Starting to process ${logLines.length} log lines`);
       
-      // Process in chunks to avoid UI freezing
       processLogDataInChunks(logContent, patterns);
       toast.success("Started processing log data");
     } catch (error) {
@@ -151,7 +147,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }
   }, [logContent, patterns]);
 
-  // Break the processing into chunks to prevent UI freezing
   const processLogDataInChunks = useCallback((content: string, regexPatterns: RegexPattern[]) => {
     const CHUNK_SIZE = 5000; // Increased chunk size for faster processing
     const lines = content.split('\n');
@@ -161,7 +156,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     setChartData([]);
     setFormattedChartData([]);
     
-    // Create signals before processing
     const newSignals: Signal[] = regexPatterns.map((pattern, index) => ({
       id: `signal-${Date.now()}-${index}`,
       name: pattern.name,
@@ -180,7 +174,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     const stringValues: Record<string, Set<string>> = {};
     const lastSeenValues: Record<string, number | string> = {};
     
-    // Process chunks with setTimeout to avoid blocking UI
     const processChunk = () => {
       if (currentChunk >= chunks) {
         finalizeProcessing(parsedData, stringValues);
@@ -193,7 +186,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       const endIdx = Math.min((currentChunk + 1) * CHUNK_SIZE, totalLines);
       const chunkLines = lines.slice(startIdx, endIdx);
       
-      // Process this chunk
       let successCount = 0;
       
       chunkLines.forEach((line) => {
@@ -229,7 +221,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                   lastSeenValues[pattern.name] = value;
                   hasNewValue = true;
                   
-                  // If string value, track it for numeric mapping
                   if (typeof value === 'string') {
                     if (!stringValues[pattern.name]) {
                       stringValues[pattern.name] = new Set<string>();
@@ -240,11 +231,9 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                   successCount++;
                 }
               } catch (error) {
-                // Skip errors in regex matching
               }
             });
             
-            // Copy last seen values for patterns not found in this line
             regexPatterns.forEach((pattern) => {
               if (!(pattern.name in values) && pattern.name in lastSeenValues) {
                 values[pattern.name] = lastSeenValues[pattern.name];
@@ -255,37 +244,32 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
               parsedData.push({ timestamp, values });
             }
           } catch (error) {
-            // Skip errors in line processing
           }
         }
       });
       
-      // Update progress
       const progress = Math.round(((currentChunk + 1) / chunks) * 100);
       if (progress % 20 === 0 || progress === 100) {
         toast.info(`Processing: ${progress}% - Found ${parsedData.length.toLocaleString()} data points so far`);
       }
       
       currentChunk++;
-      setTimeout(processChunk, 0); // Schedule next chunk, giving UI time to update
+      setTimeout(processChunk, 0);
     };
     
-    // Finalize the processing after all chunks are done
     const finalizeProcessing = (parsedData: LogData[], stringValues: Record<string, Set<string>>) => {
       setProcessingStatus("Finalizing data processing");
       
-      // Use setTimeout to prevent UI freeze
       setTimeout(() => {
         try {
           parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
           
-          // Create numeric mappings for string values
           const newStringValueMap: Record<string, Record<string, number>> = {};
           
           Object.entries(stringValues).forEach(([key, valueSet]) => {
             newStringValueMap[key] = {};
             Array.from(valueSet).sort().forEach((value, index) => {
-              newStringValueMap[key][value] = index + 1; // Start from 1 to avoid zero values
+              newStringValueMap[key][value] = index + 1;
             });
           });
           
@@ -299,10 +283,8 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
             toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
             setProcessingStatus("Formatting data for display");
             
-            // Set chart data in a separate tick to avoid UI freeze
             setChartData(parsedData);
             
-            // Format data efficiently without recursive calls
             formatChartDataAsync(parsedData, newStringValueMap);
           }
         } catch (error) {
@@ -314,39 +296,31 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       }, 0);
     };
     
-    // Start processing the first chunk
     processChunk();
   }, []);
 
-  // Format chart data asynchronously to avoid stack overflow
   const formatChartDataAsync = useCallback((data: LogData[], valueMap: Record<string, Record<string, number>>) => {
     setProcessingStatus("Formatting data (this may take a moment for large datasets)");
     
-    // Use a worker pattern with setTimeout to prevent stack overflow with iterative approach
-    const BATCH_SIZE = 5000; // Process data in smaller batches for better responsiveness
+    const BATCH_SIZE = 5000;
     const result: any[] = [];
     let index = 0;
     
-    // Define the processBatch function outside of the recursive call
     const processBatch = () => {
       const end = Math.min(index + BATCH_SIZE, data.length);
       const progressPercent = Math.round((index / data.length) * 100);
       setProcessingStatus(`Formatting data: ${progressPercent}%`);
       
-      // Process this batch
       for (let i = index; i < end; i++) {
         const item = data[i];
         const dataPoint: any = {
           timestamp: item.timestamp.getTime(),
         };
         
-        // Process each value, converting strings to their numeric equivalents
         Object.entries(item.values).forEach(([key, value]) => {
           if (typeof value === 'string') {
-            // If this is a string value, use its numeric mapping
             if (valueMap[key] && valueMap[key][value] !== undefined) {
               dataPoint[key] = valueMap[key][value];
-              // Also store the original string value for tooltip display
               dataPoint[`${key}_original`] = value;
             } else {
               dataPoint[key] = 0;
@@ -359,14 +333,11 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         result.push(dataPoint);
       }
       
-      // Move to the next batch or finish
       index = end;
       
       if (index < data.length) {
-        // Use window.setTimeout with 0 delay to avoid stack overflow
         window.setTimeout(processBatch, 0);
       } else {
-        // All done, prepare data for display with setTimeout to prevent UI freeze
         window.setTimeout(() => {
           if (result.length > 0) {
             const timestamps = result.map(item => item.timestamp);
@@ -384,15 +355,12 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       }
     };
     
-    // Start processing the first batch with setTimeout
     window.setTimeout(processBatch, 0);
   }, []);
 
-  // Prepare display data with sampling
   const prepareDisplayData = useCallback((data: any[]) => {
     setProcessingStatus("Preparing chart data for display");
     
-    // Use setTimeout to prevent UI freezing with an iterative approach
     const prepareData = () => {
       try {
         const total = data.length;
@@ -400,7 +368,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         let samplingRate = 1;
         
         if (total > maxDisplayPoints) {
-          // For large datasets, use sampling to reduce points
           samplingRate = Math.ceil(total / maxDisplayPoints);
           sampled = data.filter((_, i) => i % samplingRate === 0);
           
@@ -413,7 +380,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
             totalPages: Math.ceil(total / maxDisplayPoints) 
           });
           
-          // Setup pagination if needed
           if (timeNavigation === 'pagination') {
             setCurrentPage(1);
           }
@@ -441,11 +407,9 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       }
     };
     
-    // Use window.setTimeout to break the call stack chain
     window.setTimeout(prepareData, 0);
   }, [maxDisplayPoints, timeNavigation]);
 
-  // Apply time range filtering to the data
   const applyTimeRangeFilter = useCallback((data: any[], timeRange: { start?: Date | number, end?: Date | number }) => {
     if (!timeRange.start && !timeRange.end) {
       return data;
@@ -467,23 +431,19 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     });
   }, []);
 
-  // Calculate visible data based on zoom domain and time range
   const getVisibleData = useCallback(() => {
-    // Apply time range filter first
     let filteredData = formattedChartData;
     
     if (customTimeRange.start || customTimeRange.end) {
       filteredData = applyTimeRangeFilter(formattedChartData, customTimeRange);
     }
     
-    // Then apply zoom if needed
     if (zoomDomain.start && zoomDomain.end) {
       filteredData = filteredData.filter(
         (item) => item.timestamp >= zoomDomain.start! && item.timestamp <= zoomDomain.end!
       );
     }
     
-    // Apply additional sampling if the filtered range still has too many points
     if (filteredData.length > MAX_VISIBLE_POINTS) {
       const samplingRate = Math.ceil(filteredData.length / MAX_VISIBLE_POINTS);
       return filteredData.filter((_, i) => i % samplingRate === 0);
@@ -492,7 +452,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     return filteredData;
   }, [formattedChartData, zoomDomain, customTimeRange, applyTimeRangeFilter]);
 
-  // Handle pagination
   const handlePageChange = useCallback((page: number) => {
     if (!dataStats.totalPages) return;
     
@@ -501,15 +460,12 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     
     setCurrentPage(page);
     
-    // Calculate the data slice for this page
     const pageSize = maxDisplayPoints;
     const startIndex = (page - 1) * pageSize;
     const endIndex = Math.min(startIndex + pageSize, formattedChartData.length);
     
-    // Get data for this page
     const pageData = formattedChartData.slice(startIndex, endIndex);
     
-    // Update displayed data and stats
     setDisplayedChartData(pageData);
     setDataStats({
       ...dataStats,
@@ -517,19 +473,15 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       displayed: pageData.length
     });
     
-    // If we have time range data, update the custom range
     if (dataRange.min && dataRange.max && formattedChartData.length > 0) {
-      // Set custom time range to this page's date range
       const pageStartTime = new Date(pageData[0].timestamp);
       const pageEndTime = new Date(pageData[pageData.length - 1].timestamp);
       setCustomTimeRange({ start: pageStartTime, end: pageEndTime });
     }
     
-    // Reset zoom when changing pages
     setZoomDomain({});
   }, [dataStats, maxDisplayPoints, formattedChartData, dataRange]);
 
-  // Function to navigate through time periods
   const navigateTime = useCallback((direction: 'forward' | 'backward') => {
     if (!customTimeRange.start || !customTimeRange.end) return;
     
@@ -540,7 +492,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     if (direction === 'forward') {
       const newStart = new Date(start.getTime() + duration);
       const newEnd = new Date(end.getTime() + duration);
-      // Don't go beyond the available data
       if (dataRange.max && newEnd > dataRange.max) {
         const adjustedEnd = dataRange.max;
         const adjustedStart = new Date(adjustedEnd.getTime() - duration);
@@ -551,7 +502,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     } else {
       const newStart = new Date(start.getTime() - duration);
       const newEnd = new Date(end.getTime() - duration);
-      // Don't go before the available data
       if (dataRange.min && newStart < dataRange.min) {
         const adjustedStart = dataRange.min;
         const adjustedEnd = new Date(adjustedStart.getTime() + duration);
@@ -562,26 +512,21 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }
   }, [customTimeRange, dataRange]);
 
-  // Handle time window navigation
   const navigateTimeWindow = useCallback((direction: 'forward' | 'backward') => {
     if (!dataRange.min || !dataRange.max) return;
     
-    // Calculate window size in milliseconds
-    const windowMs = timeWindowSize * 60 * 60 * 1000; // hours to ms
+    const windowMs = timeWindowSize * 60 * 60 * 1000;
     
     let newStart, newEnd;
     
     if (!customTimeRange.start || !customTimeRange.end) {
-      // If no current range, start from the end of data and move backward
       newEnd = dataRange.max;
       newStart = new Date(newEnd.getTime() - windowMs);
     } else {
-      // Move window forward or backward
       if (direction === 'forward') {
         newStart = new Date(customTimeRange.end.getTime());
         newEnd = new Date(newStart.getTime() + windowMs);
         
-        // Don't go beyond the available data
         if (newEnd > dataRange.max) {
           newEnd = dataRange.max;
           newStart = new Date(newEnd.getTime() - windowMs);
@@ -590,7 +535,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         newEnd = new Date(customTimeRange.start.getTime());
         newStart = new Date(newEnd.getTime() - windowMs);
         
-        // Don't go before the available data
         if (newStart < dataRange.min) {
           newStart = dataRange.min;
           newEnd = new Date(newStart.getTime() + windowMs);
@@ -599,17 +543,13 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }
     
     setCustomTimeRange({ start: newStart, end: newEnd });
-    // Reset zoom when changing time window
     setZoomDomain({});
   }, [customTimeRange, dataRange, timeWindowSize]);
 
-  // Effect to update displayed data when time range changes
   useEffect(() => {
     if (timeNavigation === 'window' && customTimeRange.start && customTimeRange.end) {
-      // Filter data by current time window
       const filteredData = applyTimeRangeFilter(formattedChartData, customTimeRange);
       
-      // Apply sampling if needed
       let sampledData = filteredData;
       let samplingRate = 1;
       
@@ -629,21 +569,17 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }
   }, [customTimeRange, timeNavigation, formattedChartData, maxDisplayPoints, applyTimeRangeFilter]);
 
-  // Fixed TypeScript error in timeRangePreset selection
   const handleTimeRangePresetChange = useCallback((preset: string) => {
     setTimeRangePreset(preset);
-    setZoomDomain({}); // Reset zoom when changing time range
+    setZoomDomain({});
     
     if (preset === 'all') {
       setTimeNavigation('preset');
       setCustomTimeRange({});
       
-      // Show full dataset with sampling
       prepareDisplayData(formattedChartData);
     } else if (preset === 'custom') {
-      // Keep current custom range if it exists
       if (!customTimeRange.start || !customTimeRange.end) {
-        // Set a default 1-hour range at the end of the data if no custom range exists
         if (dataRange.max) {
           const end = dataRange.max;
           const start = subHours(end, 1);
@@ -653,7 +589,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     } else if (preset === 'window') {
       setTimeNavigation('window');
       
-      // Set initial window to last N hours of data
       if (dataRange.max) {
         const end = dataRange.max;
         const start = subHours(end, timeWindowSize);
@@ -663,15 +598,12 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       setTimeNavigation('pagination');
       setCustomTimeRange({});
       
-      // Start at page 1
       handlePageChange(1);
     } else {
-      // Apply one of the standard presets
       setTimeNavigation('preset');
       const presetConfig = TIME_RANGE_PRESETS.find(p => p.value === preset);
       if (presetConfig && dataRange.max) {
         const range = presetConfig.getRange(dataRange.max);
-        // Make sure the range is within our data
         if (dataRange.min && range.start && range.start < dataRange.min) {
           range.start = dataRange.min;
         }
@@ -680,7 +612,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }
   }, [customTimeRange, dataRange, timeWindowSize, formattedChartData, prepareDisplayData, handlePageChange]);
 
-  // Fixed type error with time navigation control
   const getTimeNavigationValue = useCallback(() => {
     if (timeNavigation === 'pagination') return 'pagination';
     if (timeNavigation === 'window') return 'window';
@@ -688,14 +619,11 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     return 'custom';
   }, [timeNavigation, timeRangePreset]);
 
-  // Memoize the visible data to improve performance
   const visibleChartData = useMemo(() => {
-    // If we're in pagination mode, just use the current displayed data
     if (timeNavigation === 'pagination') {
       return displayedChartData;
     }
     
-    // Otherwise, calculate the visible data based on filters
     return getVisibleData();
   }, [getVisibleData, displayedChartData, timeNavigation]);
 
@@ -757,7 +685,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
   }, []);
 
-  // Format for longer time labels, used in time navigation
   const formatTimeLabel = useCallback((date: Date) => {
     return format(date, 'MMM dd, HH:mm');
   }, []);
@@ -790,31 +717,25 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     toast.success("Reset all data and settings");
   }, []);
 
-  // Handle max display points change
   const handleMaxPointsChange = useCallback((value: number[]) => {
     const newMaxPoints = value[0];
     if (newMaxPoints !== maxDisplayPoints) {
       setMaxDisplayPoints(newMaxPoints);
       
-      // Reapply sampling with the new max points setting
       if (formattedChartData.length > 0) {
         setProcessingStatus("Resampling data...");
         setIsProcessing(true);
         
-        // Use setTimeout to prevent UI freezing
         setTimeout(() => {
           try {
             if (timeNavigation === 'pagination') {
-              // Update page size and recalculate pages
               const totalPages = Math.ceil(formattedChartData.length / newMaxPoints);
               setDataStats({
                 ...dataStats,
                 totalPages
               });
-              // Reload current page with new size
               handlePageChange(currentPage);
             } else {
-              // Resample the data with new point limit
               prepareDisplayData(formattedChartData);
             }
           } catch (error) {
@@ -828,7 +749,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }
   }, [maxDisplayPoints, formattedChartData, timeNavigation, dataStats, currentPage, handlePageChange, prepareDisplayData]);
 
-  // Render UI
   return (
     <Card className={cn("shadow-sm border-border/50", className)}>
       <CardHeader className="pb-2">
@@ -887,9 +807,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         
         {chartData.length > 0 && (
           <div className="space-y-4">
-            {/* Chart controls */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              {/* Time navigation controls */}
               <div className="lg:col-span-8 flex flex-wrap gap-2 items-center">
                 <Select value={getTimeNavigationValue()} onValueChange={handleTimeRangePresetChange}>
                   <SelectTrigger className="w-36">
@@ -977,11 +895,17 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                   <Pagination className="mt-0">
                     <PaginationContent>
                       <PaginationItem>
-                        <PaginationPrevious 
-                          onClick={() => handlePageChange(currentPage - 1)}
-                          tabIndex={0}
-                          disabled={currentPage <= 1}
-                        />
+                        {currentPage <= 1 ? (
+                          <span className="flex h-10 items-center gap-1 pl-2.5 pr-2.5 text-muted-foreground">
+                            <ChevronLeft className="h-4 w-4" />
+                            <span>Previous</span>
+                          </span>
+                        ) : (
+                          <PaginationPrevious 
+                            onClick={() => handlePageChange(currentPage - 1)}
+                            tabIndex={0}
+                          />
+                        )}
                       </PaginationItem>
                       
                       {currentPage > 2 && (
@@ -1027,20 +951,24 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                       )}
                       
                       <PaginationItem>
-                        <PaginationNext 
-                          onClick={() => handlePageChange(currentPage + 1)}
-                          tabIndex={0}
-                          disabled={currentPage >= (dataStats.totalPages || 1)}
-                        />
+                        {currentPage >= (dataStats.totalPages || 1) ? (
+                          <span className="flex h-10 items-center gap-1 pl-2.5 pr-2.5 text-muted-foreground">
+                            <span>Next</span>
+                            <ChevronRight className="h-4 w-4" />
+                          </span>
+                        ) : (
+                          <PaginationNext 
+                            onClick={() => handlePageChange(currentPage + 1)}
+                            tabIndex={0}
+                          />
+                        )}
                       </PaginationItem>
                     </PaginationContent>
                   </Pagination>
                 )}
               </div>
               
-              {/* Chart type and sampling controls */}
               <div className="lg:col-span-4 flex flex-wrap items-center gap-3 justify-end">
-                {/* Display point limit slider */}
                 <div className="flex flex-col gap-1 min-w-[150px]">
                   <div className="flex justify-between items-center">
                     <span className="text-xs text-muted-foreground">Display limit:</span>
@@ -1056,7 +984,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                   />
                 </div>
                 
-                {/* Chart type toggle */}
                 <div className="flex border rounded-md overflow-hidden">
                   <Button
                     variant={chartType === 'line' ? 'default' : 'outline'} 
@@ -1076,7 +1003,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                   </Button>
                 </div>
                 
-                {/* Zoom reset */}
                 {zoomDomain.start && zoomDomain.end && (
                   <Button
                     variant="outline"
@@ -1089,7 +1015,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
               </div>
             </div>
             
-            {/* Data statistics */}
             <div className="text-xs flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
               <div>Total data points: <span className="font-medium">{dataStats.total.toLocaleString()}</span></div>
               <div>Currently displayed: <span className="font-medium">{dataStats.displayed.toLocaleString()}</span></div>
@@ -1103,7 +1028,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
               )}
             </div>
             
-            {/* Chart tabs */}
             <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4">
               <div className="flex items-center justify-between mb-2">
                 <TabsList>
@@ -1136,7 +1060,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
               {panels.map(panel => (
                 <TabsContent key={panel.id} value={panel.id} className="mt-0">
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                    {/* Signal selector */}
                     <div className="lg:col-span-3">
                       <div className="bg-card border rounded-md p-3">
                         <h3 className="text-sm font-medium mb-2">Available Signals</h3>
@@ -1188,7 +1111,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                       </div>
                     </div>
                     
-                    {/* Chart area */}
                     <div className="lg:col-span-9" ref={containerRef}>
                       <div className="bg-card border rounded-md p-3 h-[300px]">
                         <ResponsiveContainer width="100%" height="100%">
@@ -1284,7 +1206,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
               ))}
             </Tabs>
             
-            {/* Sample log lines for debugging */}
             {rawLogSample.length > 0 && (
               <div className="mt-8 border rounded-md">
                 <div className="px-4 py-2 bg-muted font-medium text-sm border-b flex justify-between items-center">
