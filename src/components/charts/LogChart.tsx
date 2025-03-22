@@ -319,7 +319,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   }, []);
 
   // Format chart data asynchronously to avoid stack overflow
-  // Fixed by passing stringValueMap directly as parameter rather than using from state
   const formatChartDataAsync = useCallback((data: LogData[], valueMap: Record<string, Record<string, number>>) => {
     setProcessingStatus("Formatting data (this may take a moment for large datasets)");
     
@@ -329,7 +328,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     let index = 0;
     
     // Define the processBatch function outside of the recursive call
-    // This prevents stack overflow by using setTimeout for async processing
     const processBatch = () => {
       const end = Math.min(index + BATCH_SIZE, data.length);
       const progressPercent = Math.round((index / data.length) * 100);
@@ -366,7 +364,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       
       if (index < data.length) {
         // Use window.setTimeout with 0 delay to avoid stack overflow
-        // This breaks the call stack chain and yields to the event loop
         window.setTimeout(processBatch, 0);
       } else {
         // All done, prepare data for display with setTimeout to prevent UI freeze
@@ -390,7 +387,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     // Start processing the first batch with setTimeout
     window.setTimeout(processBatch, 0);
   }, []);
-  
+
   // Prepare display data with sampling
   const prepareDisplayData = useCallback((data: any[]) => {
     setProcessingStatus("Preparing chart data for display");
@@ -809,4 +806,500 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
           try {
             if (timeNavigation === 'pagination') {
               // Update page size and recalculate pages
-              const totalPages = Math.ceil
+              const totalPages = Math.ceil(formattedChartData.length / newMaxPoints);
+              setDataStats({
+                ...dataStats,
+                totalPages
+              });
+              // Reload current page with new size
+              handlePageChange(currentPage);
+            } else {
+              // Resample the data with new point limit
+              prepareDisplayData(formattedChartData);
+            }
+          } catch (error) {
+            console.error("Error updating display points:", error);
+            toast.error("Error updating display settings");
+            setIsProcessing(false);
+            setProcessingStatus("");
+          }
+        }, 0);
+      }
+    }
+  }, [maxDisplayPoints, formattedChartData, timeNavigation, dataStats, currentPage, handlePageChange, prepareDisplayData]);
+
+  // Render UI
+  return (
+    <Card className={cn("shadow-sm border-border/50", className)}>
+      <CardHeader className="pb-2">
+        <div className="flex justify-between items-center flex-wrap gap-4">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <LineChartIcon className="h-5 w-5" /> 
+              Log Visualization
+            </CardTitle>
+            <CardDescription>
+              Visualize patterns from your log data
+            </CardDescription>
+          </div>
+          
+          <div className="flex gap-2 items-center">
+            {isProcessing && (
+              <div className="flex items-center text-sm text-muted-foreground">
+                <div className="w-4 h-4 mr-2 rounded-full border-2 border-t-primary animate-spin" />
+                {processingStatus}
+              </div>
+            )}
+            
+            <Button 
+              variant="outline" 
+              size="sm" 
+              disabled={isProcessing || formattedChartData.length === 0}
+              title="Reset chart"
+              onClick={handleResetAll}
+            >
+              <RefreshCcw className="h-4 w-4 mr-1" /> Reset
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      
+      <CardContent>
+        {isProcessing && chartData.length === 0 && (
+          <div className="py-16 flex flex-col items-center justify-center text-center">
+            <div className="w-10 h-10 mb-4 rounded-full border-4 border-t-primary animate-spin" />
+            <h3 className="text-lg font-medium mb-1">Processing log data</h3>
+            <p className="text-sm text-muted-foreground max-w-md">
+              {processingStatus || "Extracting patterns from your log file..."}
+            </p>
+          </div>
+        )}
+        
+        {!isProcessing && chartData.length === 0 && (
+          <div className="py-16 flex flex-col items-center justify-center text-center">
+            <LineChartIcon className="w-12 h-12 mb-4 text-muted-foreground/50" />
+            <h3 className="text-lg font-medium mb-1">No visualization data yet</h3>
+            <p className="text-sm text-muted-foreground max-w-md">
+              Select patterns to extract data from your logs.
+            </p>
+          </div>
+        )}
+        
+        {chartData.length > 0 && (
+          <div className="space-y-4">
+            {/* Chart controls */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              {/* Time navigation controls */}
+              <div className="lg:col-span-8 flex flex-wrap gap-2 items-center">
+                <Select value={getTimeNavigationValue()} onValueChange={handleTimeRangePresetChange}>
+                  <SelectTrigger className="w-36">
+                    <SelectValue placeholder="Time range" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All data</SelectItem>
+                    <SelectItem value="pagination">Pagination</SelectItem>
+                    <SelectItem value="window">Sliding window</SelectItem>
+                    {TIME_RANGE_PRESETS.filter(p => p.value !== 'all').map(preset => (
+                      <SelectItem key={preset.value} value={preset.value}>
+                        {preset.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                
+                {timeNavigation === 'window' && (
+                  <>
+                    <Select 
+                      value={timeWindowSize.toString()} 
+                      onValueChange={(val) => setTimeWindowSize(Number(val))}
+                    >
+                      <SelectTrigger className="w-32">
+                        <Clock className="w-4 h-4 mr-2" /> {timeWindowSize}h
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[1, 2, 4, 6, 12, 24, 48, 72].map(hours => (
+                          <SelectItem key={hours} value={hours.toString()}>
+                            {hours} hours
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    
+                    <div className="flex gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigateTimeWindow('backward')}
+                        disabled={isProcessing}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigateTimeWindow('forward')}
+                        disabled={isProcessing}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </>
+                )}
+                
+                {timeNavigation === 'preset' && customTimeRange.start && customTimeRange.end && (
+                  <div className="text-sm flex items-center gap-2">
+                    <CalendarRange className="w-4 h-4" />
+                    <span>
+                      {formatTimeLabel(customTimeRange.start)} - {formatTimeLabel(customTimeRange.end)}
+                    </span>
+                    <div className="flex gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigateTime('backward')}
+                        disabled={isProcessing}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigateTime('forward')}
+                        disabled={isProcessing}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                
+                {timeNavigation === 'pagination' && dataStats.totalPages && dataStats.totalPages > 1 && (
+                  <Pagination className="mt-0">
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious 
+                          onClick={() => handlePageChange(currentPage - 1)}
+                          tabIndex={0}
+                          disabled={currentPage <= 1}
+                        />
+                      </PaginationItem>
+                      
+                      {currentPage > 2 && (
+                        <PaginationItem>
+                          <PaginationLink onClick={() => handlePageChange(1)}>
+                            1
+                          </PaginationLink>
+                        </PaginationItem>
+                      )}
+                      
+                      {currentPage > 3 && <PaginationEllipsis />}
+                      
+                      {currentPage > 1 && (
+                        <PaginationItem>
+                          <PaginationLink onClick={() => handlePageChange(currentPage - 1)}>
+                            {currentPage - 1}
+                          </PaginationLink>
+                        </PaginationItem>
+                      )}
+                      
+                      <PaginationItem>
+                        <PaginationLink isActive onClick={() => handlePageChange(currentPage)}>
+                          {currentPage}
+                        </PaginationLink>
+                      </PaginationItem>
+                      
+                      {currentPage < dataStats.totalPages && (
+                        <PaginationItem>
+                          <PaginationLink onClick={() => handlePageChange(currentPage + 1)}>
+                            {currentPage + 1}
+                          </PaginationLink>
+                        </PaginationItem>
+                      )}
+                      
+                      {currentPage < dataStats.totalPages - 2 && <PaginationEllipsis />}
+                      
+                      {currentPage < dataStats.totalPages - 1 && (
+                        <PaginationItem>
+                          <PaginationLink onClick={() => handlePageChange(dataStats.totalPages)}>
+                            {dataStats.totalPages}
+                          </PaginationLink>
+                        </PaginationItem>
+                      )}
+                      
+                      <PaginationItem>
+                        <PaginationNext 
+                          onClick={() => handlePageChange(currentPage + 1)}
+                          tabIndex={0}
+                          disabled={currentPage >= (dataStats.totalPages || 1)}
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                )}
+              </div>
+              
+              {/* Chart type and sampling controls */}
+              <div className="lg:col-span-4 flex flex-wrap items-center gap-3 justify-end">
+                {/* Display point limit slider */}
+                <div className="flex flex-col gap-1 min-w-[150px]">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-muted-foreground">Display limit:</span>
+                    <span className="text-xs font-medium">{maxDisplayPoints.toLocaleString()}</span>
+                  </div>
+                  <Slider
+                    defaultValue={[maxDisplayPoints]}
+                    min={1000}
+                    max={MAX_CHART_POINTS_LIMIT}
+                    step={1000}
+                    onValueChange={handleMaxPointsChange}
+                    disabled={isProcessing}
+                  />
+                </div>
+                
+                {/* Chart type toggle */}
+                <div className="flex border rounded-md overflow-hidden">
+                  <Button
+                    variant={chartType === 'line' ? 'default' : 'outline'} 
+                    size="sm"
+                    className={`rounded-none ${chartType === 'line' ? '' : 'border-0'}`}
+                    onClick={() => setChartType('line')}
+                  >
+                    <LineChartIcon className="h-4 w-4 mr-1" /> Line
+                  </Button>
+                  <Button
+                    variant={chartType === 'bar' ? 'default' : 'outline'}
+                    size="sm"
+                    className={`rounded-none ${chartType === 'bar' ? '' : 'border-0'}`}
+                    onClick={() => setChartType('bar')}
+                  >
+                    <BarChartIcon className="h-4 w-4 mr-1" /> Bar
+                  </Button>
+                </div>
+                
+                {/* Zoom reset */}
+                {zoomDomain.start && zoomDomain.end && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleZoomReset}
+                  >
+                    <ZoomOut className="h-4 w-4 mr-1" /> Reset Zoom
+                  </Button>
+                )}
+              </div>
+            </div>
+            
+            {/* Data statistics */}
+            <div className="text-xs flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+              <div>Total data points: <span className="font-medium">{dataStats.total.toLocaleString()}</span></div>
+              <div>Currently displayed: <span className="font-medium">{dataStats.displayed.toLocaleString()}</span></div>
+              {dataStats.samplingRate > 1 && (
+                <div>Sampling rate: <span className="font-medium">1/{dataStats.samplingRate}</span></div>
+              )}
+              {customTimeRange.start && customTimeRange.end && (
+                <div>Range: <span className="font-medium">
+                  {formatTimeLabel(customTimeRange.start)} - {formatTimeLabel(customTimeRange.end)}
+                </span></div>
+              )}
+            </div>
+            
+            {/* Chart tabs */}
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4">
+              <div className="flex items-center justify-between mb-2">
+                <TabsList>
+                  {panels.map(panel => (
+                    <TabsTrigger key={panel.id} value={panel.id} className="relative">
+                      Panel {panel.id.split('-')[1]}
+                      {panels.length > 1 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRemovePanel(panel.id);
+                          }}
+                          className="ml-1 rounded-full hover:bg-muted p-0.5 absolute -top-1 -right-1"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={handleAddPanel}
+                >
+                  <Plus className="h-4 w-4 mr-1" /> Add Panel
+                </Button>
+              </div>
+              
+              {panels.map(panel => (
+                <TabsContent key={panel.id} value={panel.id} className="mt-0">
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                    {/* Signal selector */}
+                    <div className="lg:col-span-3">
+                      <div className="bg-card border rounded-md p-3">
+                        <h3 className="text-sm font-medium mb-2">Available Signals</h3>
+                        <ScrollArea className="h-[300px]">
+                          <div className="space-y-1.5 pr-3">
+                            {signals.map(signal => {
+                              const isInPanel = panel.signals.includes(signal.id);
+                              
+                              return (
+                                <div
+                                  key={signal.id}
+                                  className={`
+                                    flex items-center justify-between p-2 text-sm rounded-md cursor-pointer
+                                    ${isInPanel ? 'bg-muted' : 'hover:bg-muted/50'}
+                                  `}
+                                  onClick={() => {
+                                    if (isInPanel) {
+                                      handleRemoveSignalFromPanel(panel.id, signal.id);
+                                    } else {
+                                      handleAddSignalToPanel(panel.id, signal.id);
+                                    }
+                                  }}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <div 
+                                      className="w-3 h-3 rounded-full" 
+                                      style={{ backgroundColor: signal.color }}
+                                    />
+                                    <span>{signal.name}</span>
+                                  </div>
+                                  {isInPanel && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 w-6 p-0"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        toggleSignalVisibility(signal.id);
+                                      }}
+                                    >
+                                      <div className={`w-2 h-2 rounded-full ${signal.visible ? 'bg-green-500' : 'bg-red-500'}`} />
+                                    </Button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </ScrollArea>
+                      </div>
+                    </div>
+                    
+                    {/* Chart area */}
+                    <div className="lg:col-span-9" ref={containerRef}>
+                      <div className="bg-card border rounded-md p-3 h-[300px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          {chartType === 'line' ? (
+                            <LineChart
+                              data={visibleChartData}
+                              margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis 
+                                dataKey="timestamp" 
+                                tickFormatter={formatXAxis} 
+                                type="number"
+                                domain={zoomDomain.start && zoomDomain.end ? [zoomDomain.start, zoomDomain.end] : ['dataMin', 'dataMax']}
+                                scale="time"
+                              />
+                              <YAxis />
+                              <RechartsTooltip content={<CustomTooltip />} />
+                              <Legend />
+                              {getPanelSignals(panel.id).map(signal => (
+                                <Line
+                                  key={signal.id}
+                                  type="monotone"
+                                  dataKey={signal.name}
+                                  name={signal.name}
+                                  stroke={signal.color}
+                                  activeDot={{ r: 6 }}
+                                  isAnimationActive={false}
+                                />
+                              ))}
+                              <Brush 
+                                dataKey="timestamp" 
+                                height={30} 
+                                stroke="#8884d8" 
+                                onChange={(brushData) => {
+                                  if (brushData.startIndex === brushData.endIndex) return;
+                                  if (visibleChartData.length === 0) return;
+                                  
+                                  setZoomDomain({
+                                    start: visibleChartData[brushData.startIndex].timestamp,
+                                    end: visibleChartData[brushData.endIndex].timestamp
+                                  });
+                                }}
+                              />
+                            </LineChart>
+                          ) : (
+                            <BarChart
+                              data={visibleChartData}
+                              margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis 
+                                dataKey="timestamp" 
+                                tickFormatter={formatXAxis} 
+                                type="number"
+                                domain={zoomDomain.start && zoomDomain.end ? [zoomDomain.start, zoomDomain.end] : ['dataMin', 'dataMax']}
+                                scale="time"
+                              />
+                              <YAxis />
+                              <RechartsTooltip content={<CustomTooltip />} />
+                              <Legend />
+                              {getPanelSignals(panel.id).map(signal => (
+                                <Bar
+                                  key={signal.id}
+                                  type="monotone"
+                                  dataKey={signal.name}
+                                  name={signal.name}
+                                  fill={signal.color}
+                                  isAnimationActive={false}
+                                />
+                              ))}
+                              <Brush 
+                                dataKey="timestamp" 
+                                height={30} 
+                                stroke="#8884d8" 
+                                onChange={(brushData) => {
+                                  if (brushData.startIndex === brushData.endIndex) return;
+                                  if (visibleChartData.length === 0) return;
+                                  
+                                  setZoomDomain({
+                                    start: visibleChartData[brushData.startIndex].timestamp,
+                                    end: visibleChartData[brushData.endIndex].timestamp
+                                  });
+                                }}
+                              />
+                            </BarChart>
+                          )}
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  </div>
+                </TabsContent>
+              ))}
+            </Tabs>
+            
+            {/* Sample log lines for debugging */}
+            {rawLogSample.length > 0 && (
+              <div className="mt-8 border rounded-md">
+                <div className="px-4 py-2 bg-muted font-medium text-sm border-b flex justify-between items-center">
+                  <span>Sample Log Lines</span>
+                </div>
+                <div className="p-3 text-xs font-mono whitespace-pre-wrap bg-black text-green-400 overflow-x-auto max-h-[200px]">
+                  {rawLogSample.join('\n')}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
+export default LogChart;
