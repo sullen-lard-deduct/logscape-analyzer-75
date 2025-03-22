@@ -254,73 +254,98 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       }
       
       currentChunk++;
-      setTimeout(processChunk, 0);
+      
+      // Use requestAnimationFrame instead of setTimeout for smoother UI updates
+      // This helps prevent the browser from getting stuck in long processing loops
+      requestAnimationFrame(() => {
+        setTimeout(processChunk, 0);
+      });
     };
     
     const finalizeProcessing = (parsedData: LogData[], stringValues: Record<string, Set<string>>) => {
       setProcessingStatus("Finalizing data processing");
       
-      setTimeout(() => {
-        try {
-          parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-          
-          const newStringValueMap: Record<string, Record<string, number>> = {};
-          
-          Object.entries(stringValues).forEach(([key, valueSet]) => {
-            newStringValueMap[key] = {};
-            Array.from(valueSet).sort().forEach((value, index) => {
-              newStringValueMap[key][value] = index + 1;
+      // Use requestAnimationFrame to yield to browser
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          try {
+            parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+            
+            const newStringValueMap: Record<string, Record<string, number>> = {};
+            
+            Object.entries(stringValues).forEach(([key, valueSet]) => {
+              newStringValueMap[key] = {};
+              Array.from(valueSet).sort().forEach((value, index) => {
+                newStringValueMap[key][value] = index + 1;
+              });
             });
-          });
-          
-          console.log("String value mappings:", newStringValueMap);
-          setStringValueMap(newStringValueMap);
-          
-          if (parsedData.length === 0) {
-            toast.warning("No matching data found with the provided patterns");
+            
+            console.log("String value mappings:", newStringValueMap);
+            setStringValueMap(newStringValueMap);
+            
+            if (parsedData.length === 0) {
+              toast.warning("No matching data found with the provided patterns");
+              setIsProcessing(false);
+              setProcessingStatus("");
+            } else {
+              toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
+              setProcessingStatus("Formatting data for display");
+              
+              // Set chart data in a separate tick to avoid UI freeze
+              setChartData(parsedData);
+              
+              // Break large datasets into even smaller chunks for formatting
+              formatChartDataAsync(parsedData, newStringValueMap);
+            }
+          } catch (error) {
+            console.error("Error finalizing data:", error);
+            toast.error("Error finalizing data");
             setIsProcessing(false);
-          } else {
-            toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
-            setProcessingStatus("Formatting data for display");
-            
-            setChartData(parsedData);
-            
-            formatChartDataAsync(parsedData, newStringValueMap);
+            setProcessingStatus("");
           }
-        } catch (error) {
-          console.error("Error finalizing data:", error);
-          toast.error("Error finalizing data");
-          setIsProcessing(false);
-          setProcessingStatus("");
-        }
-      }, 0);
+        }, 0);
+      });
     };
     
+    // Start processing the first chunk
     processChunk();
   }, []);
 
   const formatChartDataAsync = useCallback((data: LogData[], valueMap: Record<string, Record<string, number>>) => {
     setProcessingStatus("Formatting data (this may take a moment for large datasets)");
     
-    const BATCH_SIZE = 5000;
+    // Use smaller batch sizes for very large datasets
+    const getBatchSize = () => {
+      // Dynamically adjust batch size based on dataset size
+      if (data.length > 100000) return 2000;
+      if (data.length > 50000) return 3000;
+      return 5000; 
+    };
+    
+    const BATCH_SIZE = getBatchSize();
     const result: any[] = [];
     let index = 0;
     
+    // Define the processBatch function outside of the recursive call
     const processBatch = () => {
       const end = Math.min(index + BATCH_SIZE, data.length);
       const progressPercent = Math.round((index / data.length) * 100);
       setProcessingStatus(`Formatting data: ${progressPercent}%`);
       
+      // Process this batch
       for (let i = index; i < end; i++) {
         const item = data[i];
         const dataPoint: any = {
           timestamp: item.timestamp.getTime(),
         };
         
+        // Process each value, converting strings to their numeric equivalents
         Object.entries(item.values).forEach(([key, value]) => {
           if (typeof value === 'string') {
+            // If this is a string value, use its numeric mapping
             if (valueMap[key] && valueMap[key][value] !== undefined) {
               dataPoint[key] = valueMap[key][value];
+              // Also store the original string value for tooltip display
               dataPoint[`${key}_original`] = value;
             } else {
               dataPoint[key] = 0;
@@ -333,29 +358,40 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         result.push(dataPoint);
       }
       
+      // Move to the next batch or finish
       index = end;
       
       if (index < data.length) {
-        window.setTimeout(processBatch, 0);
+        // Use requestAnimationFrame to yield to the browser's rendering cycle
+        // This significantly improves UI responsiveness for very large datasets
+        requestAnimationFrame(() => {
+          setTimeout(processBatch, 0);
+        });
       } else {
-        window.setTimeout(() => {
-          if (result.length > 0) {
-            const timestamps = result.map(item => item.timestamp);
-            const minTime = new Date(Math.min(...timestamps));
-            const maxTime = new Date(Math.max(...timestamps));
-            setDataRange({ min: minTime, max: maxTime });
-            
-            setFormattedChartData(result);
-            prepareDisplayData(result);
-          } else {
-            setIsProcessing(false);
-            setProcessingStatus("");
-          }
-        }, 0);
+        // All done, prepare data for display with requestAnimationFrame
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            if (result.length > 0) {
+              const timestamps = result.map(item => item.timestamp);
+              const minTime = new Date(Math.min(...timestamps));
+              const maxTime = new Date(Math.max(...timestamps));
+              setDataRange({ min: minTime, max: maxTime });
+              
+              setFormattedChartData(result);
+              prepareDisplayData(result);
+            } else {
+              setIsProcessing(false);
+              setProcessingStatus("");
+            }
+          }, 0);
+        });
       }
     };
     
-    window.setTimeout(processBatch, 0);
+    // Start processing the first batch
+    requestAnimationFrame(() => {
+      setTimeout(processBatch, 0);
+    });
   }, []);
 
   const prepareDisplayData = useCallback((data: any[]) => {
@@ -432,18 +468,21 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   }, []);
 
   const getVisibleData = useCallback(() => {
+    // Apply time range filter first
     let filteredData = formattedChartData;
     
     if (customTimeRange.start || customTimeRange.end) {
       filteredData = applyTimeRangeFilter(formattedChartData, customTimeRange);
     }
     
+    // Then apply zoom if needed
     if (zoomDomain.start && zoomDomain.end) {
       filteredData = filteredData.filter(
         (item) => item.timestamp >= zoomDomain.start! && item.timestamp <= zoomDomain.end!
       );
     }
     
+    // Apply additional sampling if the filtered range still has too many points
     if (filteredData.length > MAX_VISIBLE_POINTS) {
       const samplingRate = Math.ceil(filteredData.length / MAX_VISIBLE_POINTS);
       return filteredData.filter((_, i) => i % samplingRate === 0);
@@ -749,6 +788,86 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }
   }, [maxDisplayPoints, formattedChartData, timeNavigation, dataStats, currentPage, handlePageChange, prepareDisplayData]);
 
+  const renderPaginationControls = useCallback(() => {
+    if (!dataStats.totalPages || dataStats.totalPages <= 1) return null;
+    
+    return (
+      <Pagination className="mt-0">
+        <PaginationContent>
+          <PaginationItem>
+            {currentPage <= 1 ? (
+              <span className="flex h-10 items-center gap-1 pl-2.5 pr-2.5 text-muted-foreground">
+                <ChevronLeft className="h-4 w-4" />
+                <span>Previous</span>
+              </span>
+            ) : (
+              <PaginationPrevious 
+                onClick={() => handlePageChange(currentPage - 1)} 
+                tabIndex={0}
+              />
+            )}
+          </PaginationItem>
+          
+          {currentPage > 2 && (
+            <PaginationItem>
+              <PaginationLink onClick={() => handlePageChange(1)}>
+                1
+              </PaginationLink>
+            </PaginationItem>
+          )}
+          
+          {currentPage > 3 && <PaginationEllipsis />}
+          
+          {currentPage > 1 && (
+            <PaginationItem>
+              <PaginationLink onClick={() => handlePageChange(currentPage - 1)}>
+                {currentPage - 1}
+              </PaginationLink>
+            </PaginationItem>
+          )}
+          
+          <PaginationItem>
+            <PaginationLink isActive onClick={() => handlePageChange(currentPage)}>
+              {currentPage}
+            </PaginationLink>
+          </PaginationItem>
+          
+          {currentPage < dataStats.totalPages && (
+            <PaginationItem>
+              <PaginationLink onClick={() => handlePageChange(currentPage + 1)}>
+                {currentPage + 1}
+              </PaginationLink>
+            </PaginationItem>
+          )}
+          
+          {currentPage < dataStats.totalPages - 2 && <PaginationEllipsis />}
+          
+          {currentPage < dataStats.totalPages - 1 && (
+            <PaginationItem>
+              <PaginationLink onClick={() => handlePageChange(dataStats.totalPages)}>
+                {dataStats.totalPages}
+              </PaginationLink>
+            </PaginationItem>
+          )}
+          
+          <PaginationItem>
+            {currentPage >= (dataStats.totalPages || 1) ? (
+              <span className="flex h-10 items-center gap-1 pl-2.5 pr-2.5 text-muted-foreground">
+                <span>Next</span>
+                <ChevronRight className="h-4 w-4" />
+              </span>
+            ) : (
+              <PaginationNext 
+                onClick={() => handlePageChange(currentPage + 1)}
+                tabIndex={0}
+              />
+            )}
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    );
+  }, [currentPage, dataStats.totalPages, handlePageChange]);
+
   return (
     <Card className={cn("shadow-sm border-border/50", className)}>
       <CardHeader className="pb-2">
@@ -891,81 +1010,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                   </div>
                 )}
                 
-                {timeNavigation === 'pagination' && dataStats.totalPages && dataStats.totalPages > 1 && (
-                  <Pagination className="mt-0">
-                    <PaginationContent>
-                      <PaginationItem>
-                        {currentPage <= 1 ? (
-                          <span className="flex h-10 items-center gap-1 pl-2.5 pr-2.5 text-muted-foreground">
-                            <ChevronLeft className="h-4 w-4" />
-                            <span>Previous</span>
-                          </span>
-                        ) : (
-                          <PaginationPrevious 
-                            onClick={() => handlePageChange(currentPage - 1)}
-                            tabIndex={0}
-                          />
-                        )}
-                      </PaginationItem>
-                      
-                      {currentPage > 2 && (
-                        <PaginationItem>
-                          <PaginationLink onClick={() => handlePageChange(1)}>
-                            1
-                          </PaginationLink>
-                        </PaginationItem>
-                      )}
-                      
-                      {currentPage > 3 && <PaginationEllipsis />}
-                      
-                      {currentPage > 1 && (
-                        <PaginationItem>
-                          <PaginationLink onClick={() => handlePageChange(currentPage - 1)}>
-                            {currentPage - 1}
-                          </PaginationLink>
-                        </PaginationItem>
-                      )}
-                      
-                      <PaginationItem>
-                        <PaginationLink isActive onClick={() => handlePageChange(currentPage)}>
-                          {currentPage}
-                        </PaginationLink>
-                      </PaginationItem>
-                      
-                      {currentPage < dataStats.totalPages && (
-                        <PaginationItem>
-                          <PaginationLink onClick={() => handlePageChange(currentPage + 1)}>
-                            {currentPage + 1}
-                          </PaginationLink>
-                        </PaginationItem>
-                      )}
-                      
-                      {currentPage < dataStats.totalPages - 2 && <PaginationEllipsis />}
-                      
-                      {currentPage < dataStats.totalPages - 1 && (
-                        <PaginationItem>
-                          <PaginationLink onClick={() => handlePageChange(dataStats.totalPages)}>
-                            {dataStats.totalPages}
-                          </PaginationLink>
-                        </PaginationItem>
-                      )}
-                      
-                      <PaginationItem>
-                        {currentPage >= (dataStats.totalPages || 1) ? (
-                          <span className="flex h-10 items-center gap-1 pl-2.5 pr-2.5 text-muted-foreground">
-                            <span>Next</span>
-                            <ChevronRight className="h-4 w-4" />
-                          </span>
-                        ) : (
-                          <PaginationNext 
-                            onClick={() => handlePageChange(currentPage + 1)}
-                            tabIndex={0}
-                          />
-                        )}
-                      </PaginationItem>
-                    </PaginationContent>
-                  </Pagination>
-                )}
+                {timeNavigation === 'pagination' && renderPaginationControls()}
               </div>
               
               <div className="lg:col-span-4 flex flex-wrap items-center gap-3 justify-end">
@@ -1144,14 +1189,20 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                               <Brush 
                                 dataKey="timestamp" 
                                 height={30} 
-                                stroke="#8884d8" 
+                                stroke="#8884d8"
                                 onChange={(brushData) => {
                                   if (brushData.startIndex === brushData.endIndex) return;
                                   if (visibleChartData.length === 0) return;
                                   
+                                  // Fix: Store the complete timestamp values, not indices
+                                  const startTimestamp = visibleChartData[brushData.startIndex].timestamp;
+                                  const endTimestamp = visibleChartData[brushData.endIndex].timestamp;
+                                  
+                                  console.log("Brush zoom:", startTimestamp, endTimestamp);
+                                  
                                   setZoomDomain({
-                                    start: visibleChartData[brushData.startIndex].timestamp,
-                                    end: visibleChartData[brushData.endIndex].timestamp
+                                    start: startTimestamp,
+                                    end: endTimestamp
                                   });
                                 }}
                               />
@@ -1185,14 +1236,20 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                               <Brush 
                                 dataKey="timestamp" 
                                 height={30} 
-                                stroke="#8884d8" 
+                                stroke="#8884d8"
                                 onChange={(brushData) => {
                                   if (brushData.startIndex === brushData.endIndex) return;
                                   if (visibleChartData.length === 0) return;
                                   
+                                  // Fix: Store the complete timestamp values, not indices
+                                  const startTimestamp = visibleChartData[brushData.startIndex].timestamp;
+                                  const endTimestamp = visibleChartData[brushData.endIndex].timestamp;
+                                  
+                                  console.log("Brush zoom:", startTimestamp, endTimestamp);
+                                  
                                   setZoomDomain({
-                                    start: visibleChartData[brushData.startIndex].timestamp,
-                                    end: visibleChartData[brushData.endIndex].timestamp
+                                    start: startTimestamp,
+                                    end: endTimestamp
                                   });
                                 }}
                               />
