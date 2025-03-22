@@ -295,7 +295,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
               setChartData(parsedData);
               
               // Break large datasets into even smaller chunks for formatting
-              formatChartDataAsync(parsedData, newStringValueMap);
+              optimizedFormatChartData(parsedData, newStringValueMap);
             }
           } catch (error) {
             console.error("Error finalizing data:", error);
@@ -311,29 +311,42 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     processChunk();
   }, []);
 
-  const formatChartDataAsync = useCallback((data: LogData[], valueMap: Record<string, Record<string, number>>) => {
-    setProcessingStatus("Formatting data (this may take a moment for large datasets)");
+  // Replace the original formatChartDataAsync with a more optimized version
+  const optimizedFormatChartData = useCallback((data: LogData[], valueMap: Record<string, Record<string, number>>) => {
+    if (data.length === 0) {
+      setIsProcessing(false);
+      setProcessingStatus("");
+      return;
+    }
+
+    setProcessingStatus("Formatting data (0%)");
     
-    // Use smaller batch sizes for very large datasets
+    // Determine optimal batch size based on data size
     const getBatchSize = () => {
-      // Dynamically adjust batch size based on dataset size
+      if (data.length > 500000) return 1000;
       if (data.length > 100000) return 2000;
-      if (data.length > 50000) return 3000;
-      return 5000; 
+      if (data.length > 50000) return 5000;
+      return 10000;
     };
     
     const BATCH_SIZE = getBatchSize();
+    const totalBatches = Math.ceil(data.length / BATCH_SIZE);
     const result: any[] = [];
-    let index = 0;
     
-    // Define the processBatch function outside of the recursive call
+    // Pre-process min/max timestamps to set data range early
+    const timestamps = data.map(item => item.timestamp.getTime());
+    const minTime = new Date(Math.min(...timestamps));
+    const maxTime = new Date(Math.max(...timestamps));
+    setDataRange({ min: minTime, max: maxTime });
+    
+    // Process data in batches
+    let batchIndex = 0;
+    
     const processBatch = () => {
-      const end = Math.min(index + BATCH_SIZE, data.length);
-      const progressPercent = Math.round((index / data.length) * 100);
-      setProcessingStatus(`Formatting data: ${progressPercent}%`);
+      const startIdx = batchIndex * BATCH_SIZE;
+      const endIdx = Math.min((batchIndex + 1) * BATCH_SIZE, data.length);
       
-      // Process this batch
-      for (let i = index; i < end; i++) {
+      for (let i = startIdx; i < endIdx; i++) {
         const item = data[i];
         const dataPoint: any = {
           timestamp: item.timestamp.getTime(),
@@ -358,40 +371,39 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         result.push(dataPoint);
       }
       
-      // Move to the next batch or finish
-      index = end;
+      // Update progress
+      const progress = Math.round(((batchIndex + 1) / totalBatches) * 100);
+      setProcessingStatus(`Formatting data (${progress}%)`);
       
-      if (index < data.length) {
-        // Use requestAnimationFrame to yield to the browser's rendering cycle
-        // This significantly improves UI responsiveness for very large datasets
-        requestAnimationFrame(() => {
-          setTimeout(processBatch, 0);
-        });
+      batchIndex++;
+      
+      if (batchIndex < totalBatches) {
+        // Continue with next batch
+        setTimeout(processBatch, 0);
       } else {
-        // All done, prepare data for display with requestAnimationFrame
-        requestAnimationFrame(() => {
-          setTimeout(() => {
-            if (result.length > 0) {
-              const timestamps = result.map(item => item.timestamp);
-              const minTime = new Date(Math.min(...timestamps));
-              const maxTime = new Date(Math.max(...timestamps));
-              setDataRange({ min: minTime, max: maxTime });
-              
-              setFormattedChartData(result);
-              prepareDisplayData(result);
-            } else {
-              setIsProcessing(false);
-              setProcessingStatus("");
-            }
-          }, 0);
-        });
+        // All batches processed, finalize
+        finalizeBatches();
       }
     };
     
+    const finalizeBatches = () => {
+      setProcessingStatus("Finalizing chart data");
+      // Small delay to allow UI to update before setting data
+      setTimeout(() => {
+        // Set formatted data
+        setFormattedChartData(result);
+        
+        // Prepare display data
+        prepareDisplayData(result);
+        
+        setIsProcessing(false);
+        setProcessingStatus("");
+        toast.success("Chart data ready");
+      }, 10);
+    };
+    
     // Start processing the first batch
-    requestAnimationFrame(() => {
-      setTimeout(processBatch, 0);
-    });
+    setTimeout(processBatch, 0);
   }, []);
 
   const prepareDisplayData = useCallback((data: any[]) => {
@@ -777,6 +789,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
             } else {
               prepareDisplayData(formattedChartData);
             }
+            setIsProcessing(false);
           } catch (error) {
             console.error("Error updating display points:", error);
             toast.error("Error updating display settings");
