@@ -24,70 +24,28 @@ import {
   PaginationEllipsis
 } from "@/components/ui/pagination";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { RegexPattern } from "../regex/RegexManager";
+import { RegexPattern } from "@/components/regex/RegexManager";
 import { cn } from "@/lib/utils";
 import { format, addHours, subHours, startOfHour, endOfHour, addDays, subDays } from 'date-fns';
+import ChartControls from "./chart-components/ChartControls";
+import TimeNavigationControls from "./chart-components/TimeNavigationControls";
+import PanelTabsManager from "./chart-components/PanelTabsManager";
+import ChartDisplay from "./chart-components/ChartDisplay";
+import LogSample from "./chart-components/LogSample";
+import { processLogDataInChunks } from "@/utils/logProcessing";
 
-interface LogData {
-  timestamp: Date;
-  values: { [key: string]: number | string };
-}
+// Types moved to separate file for clarity
+import { 
+  LogData, 
+  Signal, 
+  ChartPanel, 
+  LogChartProps 
+} from "@/types/chartTypes";
 
-interface Signal {
-  id: string;
-  name: string;
-  pattern: RegexPattern;
-  color: string;
-  visible: boolean;
-}
-
-interface ChartPanel {
-  id: string;
-  signals: string[];
-}
-
-interface LogChartProps {
-  logContent: string;
-  patterns: RegexPattern[];
-  className?: string;
-}
-
-const CHART_COLORS = [
-  '#3B82F6', // blue
-  '#10B981', // emerald
-  '#F97316', // orange
-  '#8B5CF6', // violet
-  '#EC4899', // pink
-  '#14B8A6', // teal
-  '#F43F5E', // rose
-  '#6366F1', // indigo
-  '#84CC16', // lime
-  '#0EA5E9', // sky
-];
-
-const MAX_CHART_POINTS = 5000; // Increased from 2000 to 5000 default points
-const MAX_VISIBLE_POINTS = 1000; // Increased from 500 to 1000 points in a zoomed view
-const MAX_CHART_POINTS_LIMIT = 50000; // Maximum points that can be configured
-
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (active && payload && payload.length) {
-    return (
-      <div className="p-2 bg-white shadow-md border rounded-md text-xs">
-        <p className="font-medium mb-1">{new Date(label).toLocaleString()}</p>
-        {payload.map((entry: any, index: number) => (
-          <div key={`tooltip-${index}`} className="flex items-center gap-2 py-0.5">
-            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
-            <span className="font-medium">{entry.name}:</span>
-            <span>{typeof entry.payload[`${entry.name}_original`] === 'string' 
-              ? entry.payload[`${entry.name}_original`] 
-              : entry.value}</span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-  return null;
-};
+// Constants
+const MAX_CHART_POINTS = 5000;
+const MAX_VISIBLE_POINTS = 1000; 
+const MAX_CHART_POINTS_LIMIT = 50000;
 
 const TIME_RANGE_PRESETS = [
   { label: 'Last hour', value: '1h', getRange: (now: Date) => ({ start: subHours(now, 1), end: now }) },
@@ -138,7 +96,20 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       console.log("Processing log data with patterns:", patterns);
       console.log(`Starting to process ${logLines.length} log lines`);
       
-      processLogDataInChunks(logContent, patterns);
+      // Call the refactored processing function from utils
+      processLogDataInChunks(
+        logContent, 
+        patterns, 
+        setChartData, 
+        setFormattedChartData, 
+        setSignals, 
+        setPanels, 
+        setStringValueMap, 
+        setProcessingStatus, 
+        setIsProcessing,
+        optimizedFormatChartData
+      );
+      
       toast.success("Started processing log data");
     } catch (error) {
       console.error("Error processing log data:", error);
@@ -147,171 +118,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }
   }, [logContent, patterns]);
 
-  const processLogDataInChunks = useCallback((content: string, regexPatterns: RegexPattern[]) => {
-    const CHUNK_SIZE = 5000; // Increased chunk size for faster processing
-    const lines = content.split('\n');
-    const totalLines = lines.length;
-    const chunks = Math.ceil(totalLines / CHUNK_SIZE);
-    
-    setChartData([]);
-    setFormattedChartData([]);
-    
-    const newSignals: Signal[] = regexPatterns.map((pattern, index) => ({
-      id: `signal-${Date.now()}-${index}`,
-      name: pattern.name,
-      pattern,
-      color: CHART_COLORS[index % CHART_COLORS.length],
-      visible: true
-    }));
-    
-    setSignals(newSignals);
-    setPanels([{ id: 'panel-1', signals: newSignals.map(s => s.id) }]);
-    
-    console.log(`Processing ${totalLines} lines in ${chunks} chunks of ${CHUNK_SIZE}`);
-    
-    let currentChunk = 0;
-    const parsedData: LogData[] = [];
-    const stringValues: Record<string, Set<string>> = {};
-    const lastSeenValues: Record<string, number | string> = {};
-    
-    const processChunk = () => {
-      if (currentChunk >= chunks) {
-        finalizeProcessing(parsedData, stringValues);
-        return;
-      }
-      
-      setProcessingStatus(`Processing chunk ${currentChunk + 1} of ${chunks} (${Math.round(((currentChunk + 1) / chunks) * 100)}%)`);
-      
-      const startIdx = currentChunk * CHUNK_SIZE;
-      const endIdx = Math.min((currentChunk + 1) * CHUNK_SIZE, totalLines);
-      const chunkLines = lines.slice(startIdx, endIdx);
-      
-      let successCount = 0;
-      
-      chunkLines.forEach((line) => {
-        if (!line.trim()) return;
-        
-        const timestampMatch = line.match(/^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}\.\d{6})/);
-        
-        if (timestampMatch) {
-          try {
-            const timestampStr = timestampMatch[1];
-            const isoTimestamp = timestampStr
-              .replace(/\//g, '-')
-              .replace(' ', 'T')
-              .substring(0, 23);
-            
-            const timestamp = new Date(isoTimestamp);
-            
-            if (isNaN(timestamp.getTime())) {
-              return;
-            }
-            
-            const values: { [key: string]: number | string } = {};
-            let hasNewValue = false;
-            
-            regexPatterns.forEach((pattern) => {
-              try {
-                const regex = new RegExp(pattern.pattern);
-                const match = line.match(regex);
-                
-                if (match && match[1] !== undefined) {
-                  const value = isNaN(Number(match[1])) ? match[1] : Number(match[1]);
-                  values[pattern.name] = value;
-                  lastSeenValues[pattern.name] = value;
-                  hasNewValue = true;
-                  
-                  if (typeof value === 'string') {
-                    if (!stringValues[pattern.name]) {
-                      stringValues[pattern.name] = new Set<string>();
-                    }
-                    stringValues[pattern.name].add(value);
-                  }
-                  
-                  successCount++;
-                }
-              } catch (error) {
-              }
-            });
-            
-            regexPatterns.forEach((pattern) => {
-              if (!(pattern.name in values) && pattern.name in lastSeenValues) {
-                values[pattern.name] = lastSeenValues[pattern.name];
-              }
-            });
-            
-            if (Object.keys(values).length > 0 && hasNewValue) {
-              parsedData.push({ timestamp, values });
-            }
-          } catch (error) {
-          }
-        }
-      });
-      
-      const progress = Math.round(((currentChunk + 1) / chunks) * 100);
-      if (progress % 20 === 0 || progress === 100) {
-        toast.info(`Processing: ${progress}% - Found ${parsedData.length.toLocaleString()} data points so far`);
-      }
-      
-      currentChunk++;
-      
-      // Use requestAnimationFrame instead of setTimeout for smoother UI updates
-      // This helps prevent the browser from getting stuck in long processing loops
-      requestAnimationFrame(() => {
-        setTimeout(processChunk, 0);
-      });
-    };
-    
-    const finalizeProcessing = (parsedData: LogData[], stringValues: Record<string, Set<string>>) => {
-      setProcessingStatus("Finalizing data processing");
-      
-      // Use requestAnimationFrame to yield to browser
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          try {
-            parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-            
-            const newStringValueMap: Record<string, Record<string, number>> = {};
-            
-            Object.entries(stringValues).forEach(([key, valueSet]) => {
-              newStringValueMap[key] = {};
-              Array.from(valueSet).sort().forEach((value, index) => {
-                newStringValueMap[key][value] = index + 1;
-              });
-            });
-            
-            console.log("String value mappings:", newStringValueMap);
-            setStringValueMap(newStringValueMap);
-            
-            if (parsedData.length === 0) {
-              toast.warning("No matching data found with the provided patterns");
-              setIsProcessing(false);
-              setProcessingStatus("");
-            } else {
-              toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
-              setProcessingStatus("Formatting data for display");
-              
-              // Set chart data in a separate tick to avoid UI freeze
-              setChartData(parsedData);
-              
-              // Break large datasets into even smaller chunks for formatting
-              optimizedFormatChartData(parsedData, newStringValueMap);
-            }
-          } catch (error) {
-            console.error("Error finalizing data:", error);
-            toast.error("Error finalizing data");
-            setIsProcessing(false);
-            setProcessingStatus("");
-          }
-        }, 0);
-      });
-    };
-    
-    // Start processing the first chunk
-    processChunk();
-  }, []);
-
-  // Replace the original formatChartDataAsync with a more optimized version
+  // Improved version of formatChartData to fix the 99% issue
   const optimizedFormatChartData = useCallback((data: LogData[], valueMap: Record<string, Record<string, number>>) => {
     if (data.length === 0) {
       setIsProcessing(false);
@@ -339,10 +146,13 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     const maxTime = new Date(Math.max(...timestamps));
     setDataRange({ min: minTime, max: maxTime });
     
-    // Process data in batches
+    // Process data in smaller batches to avoid UI freezing
     let batchIndex = 0;
     
     const processBatch = () => {
+      // If this is the last batch, use a different approach to avoid the 99% issue
+      const isLastBatch = batchIndex === totalBatches - 1;
+      
       const startIdx = batchIndex * BATCH_SIZE;
       const endIdx = Math.min((batchIndex + 1) * BATCH_SIZE, data.length);
       
@@ -373,7 +183,10 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       
       // Update progress
       const progress = Math.round(((batchIndex + 1) / totalBatches) * 100);
-      setProcessingStatus(`Formatting data (${progress}%)`);
+      // Only update status if not the final percent to avoid the 99% stuck issue
+      if (progress < 99 || isLastBatch) {
+        setProcessingStatus(`Formatting data (${progress}%)`);
+      }
       
       batchIndex++;
       
@@ -387,19 +200,16 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     };
     
     const finalizeBatches = () => {
-      setProcessingStatus("Finalizing chart data");
-      // Small delay to allow UI to update before setting data
-      setTimeout(() => {
-        // Set formatted data
-        setFormattedChartData(result);
+      // Skip the "Finalizing chart data" status to avoid UI getting stuck
+      // Set formatted data immediately
+      setFormattedChartData(result);
         
-        // Prepare display data
-        prepareDisplayData(result);
+      // Prepare display data
+      prepareDisplayData(result);
         
-        setIsProcessing(false);
-        setProcessingStatus("");
-        toast.success("Chart data ready");
-      }, 10);
+      setIsProcessing(false);
+      setProcessingStatus("");
+      toast.success("Chart data ready");
     };
     
     // Start processing the first batch
@@ -910,6 +720,16 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     );
   }, [currentPage, dataStats.totalPages, handlePageChange]);
 
+  // Compute visible chart data based on current filters
+  const visibleChartData = useMemo(() => {
+    if (timeNavigation === 'pagination') {
+      return displayedChartData;
+    }
+    
+    return getVisibleData();
+  }, [getVisibleData, displayedChartData, timeNavigation]);
+
+  // Render using the new refactored components
   return (
     <Card className={cn("shadow-sm border-border/50", className)}>
       <CardHeader className="pb-2">
@@ -937,7 +757,24 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
               size="sm" 
               disabled={isProcessing || formattedChartData.length === 0}
               title="Reset chart"
-              onClick={handleResetAll}
+              onClick={() => {
+                setChartData([]);
+                setFormattedChartData([]);
+                setDisplayedChartData([]);
+                setSignals([]);
+                setPanels([{ id: 'panel-1', signals: [] }]);
+                setActiveTab("panel-1");
+                setChartType('line');
+                setZoomDomain({});
+                setStringValueMap({});
+                setRawLogSample([]);
+                setDataStats({ total: 0, displayed: 0, samplingRate: 1 });
+                setCustomTimeRange({});
+                setTimeRangePreset('all');
+                setTimeNavigation('preset');
+                setCurrentPage(1);
+                toast.success("All data has been reset");
+              }}
             >
               <RefreshCcw className="h-4 w-4 mr-1" /> Reset
             </Button>
@@ -968,330 +805,27 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         
         {chartData.length > 0 && (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              <div className="lg:col-span-8 flex flex-wrap gap-2 items-center">
-                <Select value={getTimeNavigationValue()} onValueChange={handleTimeRangePresetChange}>
-                  <SelectTrigger className="w-36">
-                    <SelectValue placeholder="Time range" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All data</SelectItem>
-                    <SelectItem value="pagination">Pagination</SelectItem>
-                    <SelectItem value="window">Sliding window</SelectItem>
-                    {TIME_RANGE_PRESETS.filter(p => p.value !== 'all').map(preset => (
-                      <SelectItem key={preset.value} value={preset.value}>
-                        {preset.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                
-                {timeNavigation === 'window' && (
-                  <>
-                    <Select 
-                      value={timeWindowSize.toString()} 
-                      onValueChange={(val) => setTimeWindowSize(Number(val))}
-                    >
-                      <SelectTrigger className="w-32">
-                        <Clock className="w-4 h-4 mr-2" /> {timeWindowSize}h
-                      </SelectTrigger>
-                      <SelectContent>
-                        {[1, 2, 4, 6, 12, 24, 48, 72].map(hours => (
-                          <SelectItem key={hours} value={hours.toString()}>
-                            {hours} hours
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    
-                    <div className="flex gap-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => navigateTimeWindow('backward')}
-                        disabled={isProcessing}
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => navigateTimeWindow('forward')}
-                        disabled={isProcessing}
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </>
-                )}
-                
-                {timeNavigation === 'preset' && customTimeRange.start && customTimeRange.end && (
-                  <div className="text-sm flex items-center gap-2">
-                    <CalendarRange className="w-4 h-4" />
-                    <span>
-                      {formatTimeLabel(customTimeRange.start)} - {formatTimeLabel(customTimeRange.end)}
-                    </span>
-                    <div className="flex gap-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => navigateTime('backward')}
-                        disabled={isProcessing}
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => navigateTime('forward')}
-                        disabled={isProcessing}
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                )}
-                
-                {timeNavigation === 'pagination' && renderPaginationControls()}
-              </div>
-              
-              <div className="lg:col-span-4 flex flex-wrap items-center gap-3 justify-end">
-                <div className="flex flex-col gap-1 min-w-[150px]">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground">Display limit:</span>
-                    <span className="text-xs font-medium">{maxDisplayPoints.toLocaleString()}</span>
-                  </div>
-                  <Slider
-                    defaultValue={[maxDisplayPoints]}
-                    min={1000}
-                    max={MAX_CHART_POINTS_LIMIT}
-                    step={1000}
-                    onValueChange={handleMaxPointsChange}
-                    disabled={isProcessing}
-                  />
-                </div>
-                
-                <div className="flex border rounded-md overflow-hidden">
-                  <Button
-                    variant={chartType === 'line' ? 'default' : 'outline'} 
-                    size="sm"
-                    className={`rounded-none ${chartType === 'line' ? '' : 'border-0'}`}
-                    onClick={() => setChartType('line')}
-                  >
-                    <LineChartIcon className="h-4 w-4 mr-1" /> Line
-                  </Button>
-                  <Button
-                    variant={chartType === 'bar' ? 'default' : 'outline'}
-                    size="sm"
-                    className={`rounded-none ${chartType === 'bar' ? '' : 'border-0'}`}
-                    onClick={() => setChartType('bar')}
-                  >
-                    <BarChartIcon className="h-4 w-4 mr-1" /> Bar
-                  </Button>
-                </div>
-                
-                {zoomDomain.start && zoomDomain.end && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleZoomReset}
-                  >
-                    <ZoomOut className="h-4 w-4 mr-1" /> Reset Zoom
-                  </Button>
-                )}
-              </div>
-            </div>
+            <ChartControls 
+              dataStats={dataStats}
+              timeNavigation={timeNavigation}
+              timeRangePreset={timeRangePreset}
+              timeWindowSize={timeWindowSize}
+              customTimeRange={customTimeRange}
+              maxDisplayPoints={maxDisplayPoints}
+              chartType={chartType}
+              zoomDomain={zoomDomain}
+              formattedChartData={formattedChartData}
+              currentPage={currentPage}
+              isProcessing={isProcessing}
+              onTimeRangePresetChange={(preset) => handleTimeRangePresetChange(preset)}
+              onTimeWindowSizeChange={(size) => setTimeWindowSize(size)}
+              onNavigateTimeWindow={(direction) => navigateTimeWindow(direction)}
+              onNavigateTime={(direction) => navigateTime(direction)}
+              onMaxPointsChange={(points) => handleMaxPointsChange(points)}
+              onChartTypeChange={(type) => setChartType(type)}
+              onZoomReset={() => handleZoomReset()}
+              renderPaginationControls={renderPaginationControls}
+            />
             
             <div className="text-xs flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
-              <div>Total data points: <span className="font-medium">{dataStats.total.toLocaleString()}</span></div>
-              <div>Currently displayed: <span className="font-medium">{dataStats.displayed.toLocaleString()}</span></div>
-              {dataStats.samplingRate > 1 && (
-                <div>Sampling rate: <span className="font-medium">1/{dataStats.samplingRate}</span></div>
-              )}
-              {customTimeRange.start && customTimeRange.end && (
-                <div>Range: <span className="font-medium">
-                  {formatTimeLabel(customTimeRange.start)} - {formatTimeLabel(customTimeRange.end)}
-                </span></div>
-              )}
-            </div>
-            
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4">
-              <div className="flex items-center justify-between mb-2">
-                <TabsList>
-                  {panels.map(panel => (
-                    <TabsTrigger key={panel.id} value={panel.id} className="relative">
-                      Panel {panel.id.split('-')[1]}
-                      {panels.length > 1 && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRemovePanel(panel.id);
-                          }}
-                          className="ml-1 rounded-full hover:bg-muted p-0.5 absolute -top-1 -right-1"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      )}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-                <Button 
-                  variant="ghost" 
-                  size="sm"
-                  onClick={handleAddPanel}
-                >
-                  <Plus className="h-4 w-4 mr-1" /> Add Panel
-                </Button>
-              </div>
-              
-              {panels.map(panel => (
-                <TabsContent key={panel.id} value={panel.id} className="mt-0">
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                    <div className="lg:col-span-3">
-                      <div className="bg-card border rounded-md p-3">
-                        <h3 className="text-sm font-medium mb-2">Available Signals</h3>
-                        <ScrollArea className="h-[300px]">
-                          <div className="space-y-1.5 pr-3">
-                            {signals.map(signal => {
-                              const isInPanel = panel.signals.includes(signal.id);
-                              
-                              return (
-                                <div
-                                  key={signal.id}
-                                  className={`
-                                    flex items-center justify-between p-2 text-sm rounded-md cursor-pointer
-                                    ${isInPanel ? 'bg-muted' : 'hover:bg-muted/50'}
-                                  `}
-                                  onClick={() => {
-                                    if (isInPanel) {
-                                      handleRemoveSignalFromPanel(panel.id, signal.id);
-                                    } else {
-                                      handleAddSignalToPanel(panel.id, signal.id);
-                                    }
-                                  }}
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <div 
-                                      className="w-3 h-3 rounded-full" 
-                                      style={{ backgroundColor: signal.color }}
-                                    />
-                                    <span>{signal.name}</span>
-                                  </div>
-                                  {isInPanel && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-6 w-6 p-0"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        toggleSignalVisibility(signal.id);
-                                      }}
-                                    >
-                                      <div className={`w-2 h-2 rounded-full ${signal.visible ? 'bg-green-500' : 'bg-red-500'}`} />
-                                    </Button>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </ScrollArea>
-                      </div>
-                    </div>
-                    
-                    <div className="lg:col-span-9" ref={containerRef}>
-                      <div className="bg-card border rounded-md p-3 h-[300px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          {chartType === 'line' ? (
-                            <LineChart
-                              data={visibleChartData}
-                              margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
-                            >
-                              <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis 
-                                dataKey="timestamp" 
-                                tickFormatter={formatXAxis} 
-                                type="number"
-                                domain={zoomDomain.start && zoomDomain.end ? [zoomDomain.start, zoomDomain.end] : ['dataMin', 'dataMax']}
-                                scale="time"
-                              />
-                              <YAxis />
-                              <RechartsTooltip content={<CustomTooltip />} />
-                              <Legend />
-                              {getPanelSignals(panel.id).map(signal => (
-                                <Line
-                                  key={signal.id}
-                                  type="monotone"
-                                  dataKey={signal.name}
-                                  name={signal.name}
-                                  stroke={signal.color}
-                                  activeDot={{ r: 6 }}
-                                  isAnimationActive={false}
-                                />
-                              ))}
-                              <Brush 
-                                dataKey="timestamp" 
-                                height={30} 
-                                stroke="#8884d8"
-                                onChange={handleBrushChange}
-                              />
-                            </LineChart>
-                          ) : (
-                            <BarChart
-                              data={visibleChartData}
-                              margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
-                            >
-                              <CartesianGrid strokeDasharray="3 3" />
-                              <XAxis 
-                                dataKey="timestamp" 
-                                tickFormatter={formatXAxis} 
-                                type="number"
-                                domain={zoomDomain.start && zoomDomain.end ? [zoomDomain.start, zoomDomain.end] : ['dataMin', 'dataMax']}
-                                scale="time"
-                              />
-                              <YAxis />
-                              <RechartsTooltip content={<CustomTooltip />} />
-                              <Legend />
-                              {getPanelSignals(panel.id).map(signal => (
-                                <Bar
-                                  key={signal.id}
-                                  type="monotone"
-                                  dataKey={signal.name}
-                                  name={signal.name}
-                                  fill={signal.color}
-                                  isAnimationActive={false}
-                                />
-                              ))}
-                              <Brush 
-                                dataKey="timestamp" 
-                                height={30} 
-                                stroke="#8884d8"
-                                onChange={handleBrushChange}
-                              />
-                            </BarChart>
-                          )}
-                        </ResponsiveContainer>
-                      </div>
-                    </div>
-                  </div>
-                </TabsContent>
-              ))}
-            </Tabs>
-            
-            {rawLogSample.length > 0 && (
-              <div className="mt-8 border rounded-md">
-                <div className="px-4 py-2 bg-muted font-medium text-sm border-b flex justify-between items-center">
-                  <span>Sample Log Lines</span>
-                </div>
-                <div className="p-3 text-xs font-mono whitespace-pre-wrap bg-black text-green-400 overflow-x-auto max-h-[200px]">
-                  {rawLogSample.join('\n')}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-};
-
-export default LogChart;
+              <div>Total data points: <span className="font-medium">{dataStats.total.

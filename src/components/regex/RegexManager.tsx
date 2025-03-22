@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import PatternForm from "./PatternForm";
+import { savePatterns, loadPatterns } from "@/utils/patternStorage";
 
 export interface RegexPattern {
   id: string;
@@ -37,51 +38,84 @@ const RegexManager: React.FC<RegexManagerProps> = ({ onApplyPattern, logSample }
   const [testResults, setTestResults] = useState<string[]>([]);
   const [testPattern, setTestPattern] = useState<RegexPattern | null>(null);
 
-  // Load saved patterns from localStorage on initial render
+  // Load saved patterns from both localStorage and server on initial render
   useEffect(() => {
-    const savedPatterns = localStorage.getItem("regexPatterns");
-    if (savedPatterns) {
+    const loadSavedPatterns = async () => {
       try {
-        setPatterns(JSON.parse(savedPatterns));
-      } catch (e) {
-        console.error("Error loading saved patterns:", e);
-      }
-    } else {
-      // Add some default patterns if none exist
-      const defaultPatterns: RegexPattern[] = [
-        {
-          id: "default-cpu",
-          name: "CPU Usage",
-          pattern: "CPU_USAGE cpu=(\\d+)%",
-          description: "Extracts CPU usage percentage"
-        },
-        {
-          id: "default-memory",
-          name: "Memory Usage",
-          pattern: "MEMORY_USAGE memory=(\\d+)MB",
-          description: "Extracts memory usage in MB"
-        },
-        {
-          id: "default-http",
-          name: "HTTP Status",
-          pattern: "HTTP_REQUEST .* status=(\\d+) .*",
-          description: "Extracts HTTP status codes"
-        },
-        {
-          id: "default-response-time",
-          name: "Response Time",
-          pattern: "HTTP_REQUEST .* time=(\\d+)ms",
-          description: "Extracts HTTP response time"
+        // Try to load patterns from our utility (which uses IndexedDB)
+        const savedPatterns = await loadPatterns();
+        
+        if (savedPatterns && savedPatterns.length > 0) {
+          setPatterns(savedPatterns);
+          return;
         }
-      ];
-      setPatterns(defaultPatterns);
-      localStorage.setItem("regexPatterns", JSON.stringify(defaultPatterns));
-    }
+        
+        // Fall back to localStorage if no patterns in IndexedDB
+        const localStoragePatterns = localStorage.getItem("regexPatterns");
+        if (localStoragePatterns) {
+          const parsed = JSON.parse(localStoragePatterns);
+          setPatterns(parsed);
+          
+          // Also save to our new storage system
+          await savePatterns(parsed);
+          return;
+        }
+        
+        // Add default patterns if none exist
+        const defaultPatterns: RegexPattern[] = [
+          {
+            id: "default-cpu",
+            name: "CPU Usage",
+            pattern: "CPU_USAGE cpu=(\\d+)%",
+            description: "Extracts CPU usage percentage"
+          },
+          {
+            id: "default-memory",
+            name: "Memory Usage",
+            pattern: "MEMORY_USAGE memory=(\\d+)MB",
+            description: "Extracts memory usage in MB"
+          },
+          {
+            id: "default-http",
+            name: "HTTP Status",
+            pattern: "HTTP_REQUEST .* status=(\\d+) .*",
+            description: "Extracts HTTP status codes"
+          },
+          {
+            id: "default-response-time",
+            name: "Response Time",
+            pattern: "HTTP_REQUEST .* time=(\\d+)ms",
+            description: "Extracts HTTP response time"
+          }
+        ];
+        setPatterns(defaultPatterns);
+        
+        // Save default patterns
+        await savePatterns(defaultPatterns);
+        localStorage.setItem("regexPatterns", JSON.stringify(defaultPatterns));
+      } catch (error) {
+        console.error("Error loading patterns:", error);
+        toast.error("Error loading saved patterns");
+      }
+    };
+    
+    loadSavedPatterns();
   }, []);
 
-  // Save patterns to localStorage whenever they change
+  // Save patterns whenever they change, both to IndexedDB and localStorage for backward compat
   useEffect(() => {
-    localStorage.setItem("regexPatterns", JSON.stringify(patterns));
+    const persistPatterns = async () => {
+      try {
+        await savePatterns(patterns);
+        localStorage.setItem("regexPatterns", JSON.stringify(patterns));
+      } catch (error) {
+        console.error("Error saving patterns:", error);
+      }
+    };
+    
+    if (patterns.length > 0) {
+      persistPatterns();
+    }
   }, [patterns]);
 
   const handleSavePattern = (name: string, pattern: string, description: string, id?: string) => {
