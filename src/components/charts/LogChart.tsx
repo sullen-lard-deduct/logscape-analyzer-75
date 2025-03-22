@@ -801,6 +801,35 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }
   }, [maxDisplayPoints, formattedChartData, timeNavigation, dataStats, currentPage, handlePageChange, prepareDisplayData]);
 
+  // Fix the handleBrushChange function to properly implement zoom
+  const handleBrushChange = useCallback((brushData: any) => {
+    if (!brushData.startIndex && brushData.startIndex !== 0) return;
+    if (!brushData.endIndex && brushData.endIndex !== 0) return;
+    if (brushData.startIndex === brushData.endIndex) return;
+    if (visibleChartData.length === 0) return;
+    
+    // Make sure we have valid indices
+    const startIndex = Math.max(0, brushData.startIndex);
+    const endIndex = Math.min(visibleChartData.length - 1, brushData.endIndex);
+    
+    // Get the timestamps from the chart data
+    const startTimestamp = visibleChartData[startIndex]?.timestamp;
+    const endTimestamp = visibleChartData[endIndex]?.timestamp;
+    
+    if (!startTimestamp || !endTimestamp) {
+      console.error("Invalid brush data timestamps:", startTimestamp, endTimestamp);
+      return;
+    }
+    
+    console.log("Brush zoom applied:", new Date(startTimestamp).toISOString(), new Date(endTimestamp).toISOString());
+    
+    // Set the zoom domain
+    setZoomDomain({
+      start: startTimestamp,
+      end: endTimestamp
+    });
+  }, [visibleChartData]);
+
   const renderPaginationControls = useCallback(() => {
     if (!dataStats.totalPages || dataStats.totalPages <= 1) return null;
     
@@ -1203,21 +1232,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                                 dataKey="timestamp" 
                                 height={30} 
                                 stroke="#8884d8"
-                                onChange={(brushData) => {
-                                  if (brushData.startIndex === brushData.endIndex) return;
-                                  if (visibleChartData.length === 0) return;
-                                  
-                                  // Fix: Store the complete timestamp values, not indices
-                                  const startTimestamp = visibleChartData[brushData.startIndex].timestamp;
-                                  const endTimestamp = visibleChartData[brushData.endIndex].timestamp;
-                                  
-                                  console.log("Brush zoom:", startTimestamp, endTimestamp);
-                                  
-                                  setZoomDomain({
-                                    start: startTimestamp,
-                                    end: endTimestamp
-                                  });
-                                }}
+                                onChange={handleBrushChange}
                               />
                             </LineChart>
                           ) : (
@@ -1250,21 +1265,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
                                 dataKey="timestamp" 
                                 height={30} 
                                 stroke="#8884d8"
-                                onChange={(brushData) => {
-                                  if (brushData.startIndex === brushData.endIndex) return;
-                                  if (visibleChartData.length === 0) return;
-                                  
-                                  // Fix: Store the complete timestamp values, not indices
-                                  const startTimestamp = visibleChartData[brushData.startIndex].timestamp;
-                                  const endTimestamp = visibleChartData[brushData.endIndex].timestamp;
-                                  
-                                  console.log("Brush zoom:", startTimestamp, endTimestamp);
-                                  
-                                  setZoomDomain({
-                                    start: startTimestamp,
-                                    end: endTimestamp
-                                  });
-                                }}
+                                onChange={handleBrushChange}
                               />
                             </BarChart>
                           )}
