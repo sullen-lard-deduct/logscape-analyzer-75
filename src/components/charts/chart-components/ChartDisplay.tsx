@@ -58,58 +58,6 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
     }
   }, [containerRef]);
 
-  const formatXAxis = (tickItem: any) => {
-    const date = new Date(tickItem);
-    return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
-  };
-
-  // Handle brush change with improved error handling
-  const handleBrushChange = (brushData: any) => {
-    console.log("Brush event data:", brushData);
-    
-    try {
-      if (!brushData || (!brushData.startIndex && brushData.startIndex !== 0) || (!brushData.endIndex && brushData.endIndex !== 0)) {
-        console.log("Invalid brush data received");
-        return;
-      }
-      
-      // For Recharts, sometimes the startIndex/endIndex can be undefined or null
-      const startIndex = typeof brushData.startIndex === 'number' ? Math.max(0, brushData.startIndex) : 0;
-      const endIndex = typeof brushData.endIndex === 'number' ? Math.min(visibleChartData.length - 1, brushData.endIndex) : visibleChartData.length - 1;
-      
-      // Make sure we have data to work with
-      if (!visibleChartData || visibleChartData.length === 0) {
-        console.log("No visible chart data available for zooming");
-        return;
-      }
-      
-      // Get the actual timestamps from the data
-      const startTimestamp = visibleChartData[startIndex]?.timestamp;
-      const endTimestamp = visibleChartData[endIndex]?.timestamp;
-      
-      // Ensure both timestamps exist
-      if (startTimestamp === undefined || endTimestamp === undefined) {
-        console.log("Missing timestamps in chart data:", startTimestamp, endTimestamp);
-        return;
-      }
-      
-      console.log(`Zooming from ${new Date(startTimestamp).toISOString()} to ${new Date(endTimestamp).toISOString()}`);
-      
-      // Call the parent's onBrushChange with the actual timestamp values
-      onBrushChange({
-        startIndex: startIndex,
-        endIndex: endIndex,
-        startValue: startTimestamp,
-        endValue: endTimestamp
-      });
-      
-      toast.info("Zoomed in on selected range");
-    } catch (error) {
-      console.error("Error handling brush change:", error);
-      toast.error("Error applying zoom");
-    }
-  };
-
   // Show placeholder when no data is available
   if (!visibleChartData || visibleChartData.length === 0) {
     return (
@@ -121,97 +69,170 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
   
   console.log(`Rendering chart with ${visibleChartData.length} data points, chart type: ${chartType}`);
   console.log("Domain settings:", { start: zoomDomain?.start || 'dataMin', end: zoomDomain?.end || 'dataMax' });
-  console.log("First few data points:", visibleChartData.slice(0, 3));
-  console.log("Last few data points:", visibleChartData.slice(-3));
+  console.log("First data point:", visibleChartData[0]);
+  console.log("Last data point:", visibleChartData[visibleChartData.length - 1]);
 
   // Set domain values for zoom
   const domainStart = zoomDomain?.start || 'dataMin';
   const domainEnd = zoomDomain?.end || 'dataMax';
 
   // Determine brush indices based on dataset size
-  const endBrushIndex = Math.min(50, visibleChartData.length - 1);
+  let startBrushIndex = 0;
+  let endBrushIndex = Math.min(Math.floor(visibleChartData.length * 0.2), visibleChartData.length - 1);
+  
+  // Format the time for the X axis
+  const formatXAxis = (tickItem: any) => {
+    const date = new Date(tickItem);
+    return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
+  };
+
+  // Handle brush change with robust error handling
+  const handleBrushChange = (brushData: any) => {
+    console.log("Brush event data:", brushData);
+    
+    if (!brushData) {
+      console.log("No brush data received");
+      return;
+    }
+    
+    // For Recharts, sometimes the startIndex/endIndex can be undefined or null
+    // Also for 'dataMin'/'dataMax' zoom reset, we don't get startIndex/endIndex
+    const hasIndices = (
+      (brushData.startIndex !== undefined && brushData.startIndex !== null) || 
+      (brushData.endIndex !== undefined && brushData.endIndex !== null)
+    );
+    
+    if (!hasIndices) {
+      // If we don't have indices but have values, it's probably a direct domain selection
+      if (brushData.startValue !== undefined && brushData.endValue !== undefined) {
+        console.log(`Zooming directly from ${new Date(brushData.startValue).toISOString()} to ${new Date(brushData.endValue).toISOString()}`);
+        
+        onBrushChange({
+          startValue: brushData.startValue,
+          endValue: brushData.endValue
+        });
+        return;
+      }
+      
+      console.log("Invalid brush data - missing indices and values");
+      return;
+    }
+    
+    // Make sure we have data to work with
+    if (!visibleChartData || visibleChartData.length === 0) {
+      console.log("No visible chart data available for zooming");
+      return;
+    }
+    
+    // Normalize startIndex and endIndex to valid ranges
+    const startIndex = Math.max(0, Math.min(visibleChartData.length - 1, brushData.startIndex || 0));
+    const endIndex = Math.max(0, Math.min(visibleChartData.length - 1, brushData.endIndex || visibleChartData.length - 1));
+    
+    // Ensure we have a reasonable range (don't zoom to a single point)
+    if (startIndex === endIndex) {
+      console.log("Brush range too small, ignoring");
+      return;
+    }
+    
+    // Get the actual timestamps from the data
+    const startTimestamp = visibleChartData[startIndex]?.timestamp;
+    const endTimestamp = visibleChartData[endIndex]?.timestamp;
+    
+    // Ensure both timestamps exist
+    if (startTimestamp === undefined || endTimestamp === undefined) {
+      console.log("Missing timestamps in chart data:", startTimestamp, endTimestamp);
+      return;
+    }
+    
+    console.log(`Zooming from ${new Date(startTimestamp).toISOString()} to ${new Date(endTimestamp).toISOString()}`);
+    
+    // Call the parent's onBrushChange with the actual timestamp values
+    onBrushChange({
+      startIndex,
+      endIndex,
+      startValue: startTimestamp,
+      endValue: endTimestamp
+    });
+    
+    toast.info("Zoomed to selected range");
+  };
+  
+  // Create chart content based on the chart type
+  const renderChartContent = () => {
+    const commonProps = {
+      data: visibleChartData,
+      margin: { top: 5, right: 20, left: 10, bottom: 5 }
+    };
+    
+    const commonAxisProps = {
+      dataKey: "timestamp",
+      type: "number" as const,
+      domain: [domainStart, domainEnd],
+      scale: "time" as const,
+      tickFormatter: formatXAxis,
+      allowDataOverflow: true
+    };
+    
+    const commonComponents = (
+      <>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis {...commonAxisProps} />
+        <YAxis />
+        <RechartsTooltip content={<CustomTooltip />} />
+        <Legend />
+        <Brush 
+          dataKey="timestamp" 
+          height={30} 
+          stroke="#8884d8"
+          onChange={handleBrushChange}
+          travellerWidth={10}
+          startIndex={startBrushIndex}
+          endIndex={endBrushIndex}
+          y={250}
+        />
+      </>
+    );
+    
+    if (chartType === 'line') {
+      return (
+        <LineChart {...commonProps}>
+          {commonComponents}
+          {signals.map(signal => (
+            <Line
+              key={signal.id}
+              type="monotone"
+              dataKey={signal.name}
+              name={signal.name}
+              stroke={signal.color}
+              activeDot={{ r: 6 }}
+              isAnimationActive={false}
+              dot={visibleChartData.length < 100}
+            />
+          ))}
+        </LineChart>
+      );
+    } else {
+      return (
+        <BarChart {...commonProps}>
+          {commonComponents}
+          {signals.map(signal => (
+            <Bar
+              key={signal.id}
+              dataKey={signal.name}
+              name={signal.name}
+              fill={signal.color}
+              isAnimationActive={false}
+            />
+          ))}
+        </BarChart>
+      );
+    }
+  };
   
   return (
     <div className="bg-card border rounded-md p-3 h-[300px]" ref={containerRef}>
       <ResponsiveContainer width="100%" height="100%">
-        {chartType === 'line' ? (
-          <LineChart
-            data={visibleChartData}
-            margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
-          >
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis 
-              dataKey="timestamp" 
-              tickFormatter={formatXAxis} 
-              type="number"
-              domain={[domainStart, domainEnd]}
-              scale="time"
-              allowDataOverflow={true}
-            />
-            <YAxis />
-            <RechartsTooltip content={<CustomTooltip />} />
-            <Legend />
-            {signals.map(signal => (
-              <Line
-                key={signal.id}
-                type="monotone"
-                dataKey={signal.name}
-                name={signal.name}
-                stroke={signal.color}
-                activeDot={{ r: 6 }}
-                isAnimationActive={false}
-                dot={visibleChartData.length < 100}
-              />
-            ))}
-            <Brush 
-              dataKey="timestamp" 
-              height={30} 
-              stroke="#8884d8"
-              onChange={handleBrushChange}
-              travellerWidth={10}
-              startIndex={0}
-              endIndex={endBrushIndex}
-              y={250}
-            />
-          </LineChart>
-        ) : (
-          <BarChart
-            data={visibleChartData}
-            margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
-          >
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis 
-              dataKey="timestamp" 
-              tickFormatter={formatXAxis} 
-              type="number"
-              domain={[domainStart, domainEnd]}
-              scale="time"
-              allowDataOverflow={true}
-            />
-            <YAxis />
-            <RechartsTooltip content={<CustomTooltip />} />
-            <Legend />
-            {signals.map(signal => (
-              <Bar
-                key={signal.id}
-                dataKey={signal.name}
-                name={signal.name}
-                fill={signal.color}
-                isAnimationActive={false}
-              />
-            ))}
-            <Brush 
-              dataKey="timestamp" 
-              height={30} 
-              stroke="#8884d8"
-              onChange={handleBrushChange}
-              travellerWidth={10}
-              startIndex={0}
-              endIndex={endBrushIndex}
-              y={250}
-            />
-          </BarChart>
-        )}
+        {renderChartContent()}
       </ResponsiveContainer>
     </div>
   );
