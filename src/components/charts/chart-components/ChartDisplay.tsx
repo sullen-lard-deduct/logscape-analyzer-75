@@ -67,12 +67,12 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
   const handleBrushChange = (brushData: any) => {
     console.log("Brush event data:", brushData);
     
-    if (!brushData || !brushData.startIndex === undefined || brushData.endIndex === undefined) {
+    if (!brushData || brushData.startIndex === undefined || brushData.endIndex === undefined) {
       console.log("Invalid brush data", brushData);
       return;
     }
     
-    if (visibleChartData.length === 0) {
+    if (!visibleChartData || visibleChartData.length === 0) {
       console.log("No visible chart data available for zooming");
       return;
     }
@@ -118,8 +118,16 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
     );
   }
 
-  const domainStart = zoomDomain.start || 'dataMin';
-  const domainEnd = zoomDomain.end || 'dataMax';
+  const domainStart = zoomDomain?.start || 'dataMin';
+  const domainEnd = zoomDomain?.end || 'dataMax';
+
+  console.log("Rendering chart with data:", {
+    dataPoints: visibleChartData.length,
+    firstPoint: visibleChartData[0],
+    lastPoint: visibleChartData[visibleChartData.length - 1],
+    zoomDomain,
+    signals: signals.length
+  });
 
   return (
     <div className="bg-card border rounded-md p-3 h-[300px]" ref={containerRef}>

@@ -130,10 +130,18 @@ export const processLogDataInChunks = (
   
   const finalizeProcessing = (parsedData: LogData[], stringValues: Record<string, Set<string>>) => {
     setProcessingStatus("Finalizing data processing");
+    console.log("Finalizing data processing, found", parsedData.length, "data points");
     
     // Use setTimeout to yield to browser
     setTimeout(() => {
       try {
+        if (parsedData.length === 0) {
+          toast.warning("No matching data found with the provided patterns");
+          setIsProcessing(false);
+          setProcessingStatus("");
+          return;
+        }
+        
         parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
         
         const newStringValueMap: Record<string, Record<string, number>> = {};
@@ -148,17 +156,11 @@ export const processLogDataInChunks = (
         console.log("String value mappings:", newStringValueMap);
         setStringValueMap(newStringValueMap);
         
-        if (parsedData.length === 0) {
-          toast.warning("No matching data found with the provided patterns");
-          setIsProcessing(false);
-          setProcessingStatus("");
-        } else {
-          toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
-          setProcessingStatus("Formatting data for display");
-          
-          // Feed parsed data in batches to avoid freezing the UI
-          formatDataWithProgressUpdates(parsedData, newStringValueMap, formatDataCallback, setProcessingStatus, setIsProcessing);
-        }
+        toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
+        setProcessingStatus("Formatting data for display");
+        
+        // Feed parsed data in batches to avoid freezing the UI
+        formatDataWithProgressUpdates(parsedData, newStringValueMap, formatDataCallback, setProcessingStatus, setIsProcessing);
       } catch (error) {
         console.error("Error finalizing data:", error);
         toast.error("Error finalizing data");
@@ -185,20 +187,14 @@ export const formatDataWithProgressUpdates = (
     toast.info(`Preparing to format ${data.length.toLocaleString()} data points. This may take a moment...`);
     
     // Show frequent progress updates especially at the end
-    const sendFrequentProgressUpdates = () => {
-      const progressInterval = setInterval(() => {
-        setProcessingStatus(prevStatus => {
-          if (prevStatus.includes("Formatting data")) {
-            return prevStatus;
-          }
-          return "Still working...";
-        });
-      }, 5000);
-      
-      return () => clearInterval(progressInterval);
-    };
-    
-    const clearProgress = sendFrequentProgressUpdates();
+    const progressInterval = setInterval(() => {
+      setProcessingStatus(prevStatus => {
+        if (prevStatus.includes("Formatting data")) {
+          return prevStatus + " (still working...)";
+        }
+        return "Still working on large dataset...";
+      });
+    }, 3000);
     
     // Add a small delay to allow UI to update
     setTimeout(() => {
@@ -207,19 +203,21 @@ export const formatDataWithProgressUpdates = (
       // Then start the actual formatting after UI has updated
       setTimeout(() => {
         try {
+          console.log("Starting format data callback with", data.length, "points");
           formatDataCallback(data, valueMap);
-          clearProgress();
+          clearInterval(progressInterval);
         } catch (error) {
           console.error("Error in data formatting:", error);
           toast.error("Error formatting chart data");
           setIsProcessing(false);
           setProcessingStatus("");
-          clearProgress();
+          clearInterval(progressInterval);
         }
       }, 100);
     }, 50);
   } else {
     // For smaller datasets, proceed normally
+    console.log("Processing smaller dataset with", data.length, "points");
     formatDataCallback(data, valueMap);
   }
 };
