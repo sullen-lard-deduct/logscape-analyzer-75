@@ -172,7 +172,7 @@ const ChartControls: React.FC<ChartControlsProps> = ({
           </Button>
         </div>
         
-        {zoomDomain.start && zoomDomain.end && (
+        {(zoomDomain.start || zoomDomain.end) && (
           <Button
             variant="outline"
             size="sm"

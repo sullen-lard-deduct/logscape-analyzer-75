@@ -15,7 +15,7 @@ export const processLogDataInChunks = (
   setIsProcessing: React.Dispatch<React.SetStateAction<boolean>>,
   formatDataCallback: (data: LogData[], valueMap: Record<string, Record<string, number>>) => void
 ) => {
-  const CHUNK_SIZE = 5000; // Increased chunk size for faster processing
+  const CHUNK_SIZE = 10000; // Increased for faster processing on capable machines
   const lines = content.split('\n');
   const totalLines = lines.length;
   const chunks = Math.ceil(totalLines / CHUNK_SIZE);
@@ -118,63 +118,108 @@ export const processLogDataInChunks = (
     });
     
     const progress = Math.round(((currentChunk + 1) / chunks) * 100);
-    if (progress % 20 === 0 || progress === 100) {
+    if (progress % 10 === 0 || progress === 100) {
       toast.info(`Processing: ${progress}% - Found ${parsedData.length.toLocaleString()} data points so far`);
     }
     
     currentChunk++;
     
-    // Use requestAnimationFrame for smoother UI updates
-    requestAnimationFrame(() => {
-      setTimeout(processChunk, 0);
-    });
+    // Use setTimeout with 0 ms for smoother UI updates
+    setTimeout(processChunk, 0);
   };
   
   const finalizeProcessing = (parsedData: LogData[], stringValues: Record<string, Set<string>>) => {
     setProcessingStatus("Finalizing data processing");
     
-    // Use requestAnimationFrame to yield to browser
-    requestAnimationFrame(() => {
-      setTimeout(() => {
-        try {
-          parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-          
-          const newStringValueMap: Record<string, Record<string, number>> = {};
-          
-          Object.entries(stringValues).forEach(([key, valueSet]) => {
-            newStringValueMap[key] = {};
-            Array.from(valueSet).sort().forEach((value, index) => {
-              newStringValueMap[key][value] = index + 1;
-            });
+    // Use setTimeout to yield to browser
+    setTimeout(() => {
+      try {
+        parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        
+        const newStringValueMap: Record<string, Record<string, number>> = {};
+        
+        Object.entries(stringValues).forEach(([key, valueSet]) => {
+          newStringValueMap[key] = {};
+          Array.from(valueSet).sort().forEach((value, index) => {
+            newStringValueMap[key][value] = index + 1;
           });
-          
-          console.log("String value mappings:", newStringValueMap);
-          setStringValueMap(newStringValueMap);
-          
-          if (parsedData.length === 0) {
-            toast.warning("No matching data found with the provided patterns");
-            setIsProcessing(false);
-            setProcessingStatus("");
-          } else {
-            toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
-            setProcessingStatus("Formatting data for display");
-            
-            // Set chart data in a separate tick to avoid UI freeze
-            setChartData(parsedData);
-            
-            // Break large datasets into even smaller chunks for formatting
-            formatDataCallback(parsedData, newStringValueMap);
-          }
-        } catch (error) {
-          console.error("Error finalizing data:", error);
-          toast.error("Error finalizing data");
+        });
+        
+        console.log("String value mappings:", newStringValueMap);
+        setStringValueMap(newStringValueMap);
+        
+        if (parsedData.length === 0) {
+          toast.warning("No matching data found with the provided patterns");
           setIsProcessing(false);
           setProcessingStatus("");
+        } else {
+          toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
+          setProcessingStatus("Formatting data for display");
+          
+          // Feed parsed data in batches to avoid freezing the UI
+          formatDataWithProgressUpdates(parsedData, newStringValueMap, formatDataCallback, setProcessingStatus, setIsProcessing);
         }
-      }, 0);
-    });
+      } catch (error) {
+        console.error("Error finalizing data:", error);
+        toast.error("Error finalizing data");
+        setIsProcessing(false);
+        setProcessingStatus("");
+      }
+    }, 0);
   };
   
   // Start processing the first chunk
   processChunk();
+};
+
+// New helper function for formatting data with better progress updates
+export const formatDataWithProgressUpdates = (
+  data: LogData[],
+  valueMap: Record<string, Record<string, number>>,
+  formatDataCallback: (data: LogData[], valueMap: Record<string, Record<string, number>>) => void,
+  setProcessingStatus: React.Dispatch<React.SetStateAction<string>>,
+  setIsProcessing: React.Dispatch<React.SetStateAction<boolean>>
+) => {
+  // For very large datasets, show explicit progress to avoid appearing stuck
+  if (data.length > 50000) {
+    toast.info(`Preparing to format ${data.length.toLocaleString()} data points. This may take a moment...`);
+    
+    // Show frequent progress updates especially at the end
+    const sendFrequentProgressUpdates = () => {
+      const progressInterval = setInterval(() => {
+        setProcessingStatus(prevStatus => {
+          if (prevStatus.includes("Formatting data")) {
+            return prevStatus;
+          }
+          return "Still working...";
+        });
+      }, 5000);
+      
+      return () => clearInterval(progressInterval);
+    };
+    
+    const clearProgress = sendFrequentProgressUpdates();
+    
+    // Add a small delay to allow UI to update
+    setTimeout(() => {
+      setProcessingStatus("Starting data formatting...");
+      
+      // Then start the actual formatting after UI has updated
+      setTimeout(() => {
+        try {
+          formatDataCallback(data, valueMap);
+          clearProgress();
+        } catch (error) {
+          console.error("Error in data formatting:", error);
+          toast.error("Error formatting chart data");
+          setIsProcessing(false);
+          setProcessingStatus("");
+          clearProgress();
+        }
+      }, 100);
+    }, 50);
+  } else {
+    // For smaller datasets, proceed normally
+    formatDataCallback(data, valueMap);
+  }
 };
