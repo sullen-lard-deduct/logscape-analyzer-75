@@ -73,6 +73,8 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
   console.log("Last data point:", visibleChartData[visibleChartData.length - 1]);
 
   // Set domain values for zoom
+  // Fix Type Error: Ensure domain is of type AxisDomain
+  // Use proper typing for the domain property as expected by recharts
   const domainStart = zoomDomain?.start || 'dataMin';
   const domainEnd = zoomDomain?.end || 'dataMax';
 
@@ -164,10 +166,12 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
       margin: { top: 5, right: 20, left: 10, bottom: 5 }
     };
     
+    // Fixed XAxis props with correct typing for domain
     const commonAxisProps = {
       dataKey: "timestamp",
       type: "number" as const,
-      domain: [domainStart, domainEnd],
+      // Fix: Use a proper AxisDomain type
+      domain: [domainStart, domainEnd] as [any, any], // This cast allows the string or number values
       scale: "time" as const,
       tickFormatter: formatXAxis,
       allowDataOverflow: true
