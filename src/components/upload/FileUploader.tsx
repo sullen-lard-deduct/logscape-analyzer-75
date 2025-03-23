@@ -27,16 +27,17 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const processLogFile = async (file: File): Promise<string> => {
-    setCurrentStep("decompressing");
-    setProgress(10);
-
-    let content = "";
     const fileName = file.name.toLowerCase();
+    let content = "";
 
     try {
       if (fileName.endsWith('.gz')) {
+        setCurrentStep("decompressing");
+        setProgress(10);
         content = await decompressGzip(file);
       } else if (fileName.endsWith('.zip')) {
+        setCurrentStep("decompressing");
+        setProgress(10);
         content = await decompressZip(file);
       } else if (fileName.endsWith('.7z')) {
         // For now, we'll show a friendly message about 7z support
@@ -44,7 +45,9 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileProcessed }) => {
         setCurrentStep("error");
         throw new Error("7z support temporarily unavailable");
       } else {
-        // Regular .log or .txt file
+        // Regular .log or .txt file - Just read without decompressing
+        setCurrentStep("processing");
+        setProgress(40);
         content = await readAsText(file);
       }
       

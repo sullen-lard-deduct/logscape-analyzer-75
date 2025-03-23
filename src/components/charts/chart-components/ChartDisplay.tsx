@@ -67,7 +67,7 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
   const handleBrushChange = (brushData: any) => {
     console.log("Brush event data:", brushData);
     
-    if (!brushData || brushData.startIndex === undefined || brushData.endIndex === undefined) {
+    if (!brushData || !brushData.startIndex || !brushData.endIndex) {
       console.log("Invalid brush data", brushData);
       return;
     }
@@ -77,15 +77,15 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
       return;
     }
     
-    const startIndex = Math.max(0, brushData.startIndex);
-    const endIndex = Math.min(visibleChartData.length - 1, brushData.endIndex);
-    
-    if (startIndex === endIndex) {
-      console.log("Start and end indices are the same, skipping zoom");
-      return;
-    }
-    
     try {
+      const startIndex = Math.max(0, brushData.startIndex);
+      const endIndex = Math.min(visibleChartData.length - 1, brushData.endIndex);
+      
+      if (startIndex === endIndex) {
+        console.log("Start and end indices are the same, skipping zoom");
+        return;
+      }
+      
       const startTimestamp = visibleChartData[startIndex]?.timestamp;
       const endTimestamp = visibleChartData[endIndex]?.timestamp;
       
@@ -118,16 +118,15 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
     );
   }
 
-  const domainStart = zoomDomain?.start || 'dataMin';
-  const domainEnd = zoomDomain?.end || 'dataMax';
-
-  console.log("Rendering chart with data:", {
+  console.log("Chart data summary:", {
     dataPoints: visibleChartData.length,
     firstPoint: visibleChartData[0],
     lastPoint: visibleChartData[visibleChartData.length - 1],
-    zoomDomain,
     signals: signals.length
   });
+
+  const domainStart = zoomDomain?.start || 'dataMin';
+  const domainEnd = zoomDomain?.end || 'dataMax';
 
   return (
     <div className="bg-card border rounded-md p-3 h-[300px]" ref={containerRef}>

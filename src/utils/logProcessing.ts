@@ -20,9 +20,11 @@ export const processLogDataInChunks = (
   const totalLines = lines.length;
   const chunks = Math.ceil(totalLines / CHUNK_SIZE);
   
+  // Clear previous data
   setChartData([]);
   setFormattedChartData([]);
   
+  // Create signals for each pattern
   const newSignals: Signal[] = regexPatterns.map((pattern, index) => ({
     id: `signal-${Date.now()}-${index}`,
     name: pattern.name,
@@ -102,6 +104,7 @@ export const processLogDataInChunks = (
             }
           });
           
+          // Add last seen values for patterns not found in this line
           regexPatterns.forEach((pattern) => {
             if (!(pattern.name in values) && pattern.name in lastSeenValues) {
               values[pattern.name] = lastSeenValues[pattern.name];
@@ -142,8 +145,10 @@ export const processLogDataInChunks = (
           return;
         }
         
+        // Sort data chronologically
         parsedData.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
         
+        // Create mapping for string values
         const newStringValueMap: Record<string, Record<string, number>> = {};
         
         Object.entries(stringValues).forEach(([key, valueSet]) => {
@@ -155,6 +160,9 @@ export const processLogDataInChunks = (
         
         console.log("String value mappings:", newStringValueMap);
         setStringValueMap(newStringValueMap);
+        
+        // Set the chart data
+        setChartData(parsedData);
         
         toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
         setProcessingStatus("Formatting data for display");
@@ -174,7 +182,7 @@ export const processLogDataInChunks = (
   processChunk();
 };
 
-// New helper function for formatting data with better progress updates
+// Helper function for formatting data with better progress updates
 export const formatDataWithProgressUpdates = (
   data: LogData[],
   valueMap: Record<string, Record<string, number>>,
