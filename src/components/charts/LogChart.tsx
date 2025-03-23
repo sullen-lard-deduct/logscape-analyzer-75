@@ -118,7 +118,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }
   }, [logContent, patterns]);
 
-  // Improved version of formatChartData to fix the 99% issue
   const optimizedFormatChartData = useCallback((data: LogData[], valueMap: Record<string, Record<string, number>>) => {
     if (data.length === 0) {
       setIsProcessing(false);
@@ -128,7 +127,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
 
     setProcessingStatus("Formatting data (0%)");
     
-    // Determine optimal batch size based on data size
     const getBatchSize = () => {
       if (data.length > 500000) return 1000;
       if (data.length > 100000) return 2000;
@@ -140,17 +138,14 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     const totalBatches = Math.ceil(data.length / BATCH_SIZE);
     const result: any[] = [];
     
-    // Pre-process min/max timestamps to set data range early
     const timestamps = data.map(item => item.timestamp.getTime());
     const minTime = new Date(Math.min(...timestamps));
     const maxTime = new Date(Math.max(...timestamps));
     setDataRange({ min: minTime, max: maxTime });
     
-    // Process data in smaller batches to avoid UI freezing
     let batchIndex = 0;
     
     const processBatch = () => {
-      // If this is the last batch, use a different approach to avoid the 99% issue
       const isLastBatch = batchIndex === totalBatches - 1;
       
       const startIdx = batchIndex * BATCH_SIZE;
@@ -162,13 +157,10 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
           timestamp: item.timestamp.getTime(),
         };
         
-        // Process each value, converting strings to their numeric equivalents
         Object.entries(item.values).forEach(([key, value]) => {
           if (typeof value === 'string') {
-            // If this is a string value, use its numeric mapping
             if (valueMap[key] && valueMap[key][value] !== undefined) {
               dataPoint[key] = valueMap[key][value];
-              // Also store the original string value for tooltip display
               dataPoint[`${key}_original`] = value;
             } else {
               dataPoint[key] = 0;
@@ -181,9 +173,7 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
         result.push(dataPoint);
       }
       
-      // Update progress
       const progress = Math.round(((batchIndex + 1) / totalBatches) * 100);
-      // Only update status if not the final percent to avoid the 99% stuck issue
       if (progress < 99 || isLastBatch) {
         setProcessingStatus(`Formatting data (${progress}%)`);
       }
@@ -191,28 +181,20 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       batchIndex++;
       
       if (batchIndex < totalBatches) {
-        // Continue with next batch
         setTimeout(processBatch, 0);
       } else {
-        // All batches processed, finalize
         finalizeBatches();
       }
     };
     
     const finalizeBatches = () => {
-      // Skip the "Finalizing chart data" status to avoid UI getting stuck
-      // Set formatted data immediately
       setFormattedChartData(result);
-        
-      // Prepare display data
       prepareDisplayData(result);
-        
       setIsProcessing(false);
       setProcessingStatus("");
       toast.success("Chart data ready");
     };
     
-    // Start processing the first batch
     setTimeout(processBatch, 0);
   }, []);
 
@@ -290,21 +272,18 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   }, []);
 
   const getVisibleData = useCallback(() => {
-    // Apply time range filter first
     let filteredData = formattedChartData;
     
     if (customTimeRange.start || customTimeRange.end) {
       filteredData = applyTimeRangeFilter(formattedChartData, customTimeRange);
     }
     
-    // Then apply zoom if needed
     if (zoomDomain.start && zoomDomain.end) {
       filteredData = filteredData.filter(
         (item) => item.timestamp >= zoomDomain.start! && item.timestamp <= zoomDomain.end!
       );
     }
     
-    // Apply additional sampling if the filtered range still has too many points
     if (filteredData.length > MAX_VISIBLE_POINTS) {
       const samplingRate = Math.ceil(filteredData.length / MAX_VISIBLE_POINTS);
       return filteredData.filter((_, i) => i % samplingRate === 0);
@@ -611,18 +590,15 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     }
   }, [maxDisplayPoints, formattedChartData, timeNavigation, dataStats, currentPage, handlePageChange, prepareDisplayData]);
 
-  // Fix the handleBrushChange function to properly implement zoom
   const handleBrushChange = useCallback((brushData: any) => {
     if (!brushData.startIndex && brushData.startIndex !== 0) return;
     if (!brushData.endIndex && brushData.endIndex !== 0) return;
     if (brushData.startIndex === brushData.endIndex) return;
     if (visibleChartData.length === 0) return;
     
-    // Make sure we have valid indices
     const startIndex = Math.max(0, brushData.startIndex);
     const endIndex = Math.min(visibleChartData.length - 1, brushData.endIndex);
     
-    // Get the timestamps from the chart data
     const startTimestamp = visibleChartData[startIndex]?.timestamp;
     const endTimestamp = visibleChartData[endIndex]?.timestamp;
     
@@ -633,7 +609,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     
     console.log("Brush zoom applied:", new Date(startTimestamp).toISOString(), new Date(endTimestamp).toISOString());
     
-    // Set the zoom domain
     setZoomDomain({
       start: startTimestamp,
       end: endTimestamp
@@ -720,16 +695,6 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
     );
   }, [currentPage, dataStats.totalPages, handlePageChange]);
 
-  // Compute visible chart data based on current filters
-  const visibleChartData = useMemo(() => {
-    if (timeNavigation === 'pagination') {
-      return displayedChartData;
-    }
-    
-    return getVisibleData();
-  }, [getVisibleData, displayedChartData, timeNavigation]);
-
-  // Render using the new refactored components
   return (
     <Card className={cn("shadow-sm border-border/50", className)}>
       <CardHeader className="pb-2">
@@ -828,4 +793,44 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
             />
             
             <div className="text-xs flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
-              <div>Total data points: <span className="font-medium">{dataStats.total.
+              <div>Total data points: <span className="font-medium">{dataStats.total.toLocaleString()}</span></div>
+              <div>Displayed: <span className="font-medium">{dataStats.displayed.toLocaleString()}</span></div>
+              {dataStats.samplingRate > 1 && (
+                <div>Sampling: <span className="font-medium">1:{dataStats.samplingRate}</span></div>
+              )}
+              {customTimeRange.start && customTimeRange.end && (
+                <div>Range: <span className="font-medium">{formatTimeLabel(customTimeRange.start)} - {formatTimeLabel(customTimeRange.end)}</span></div>
+              )}
+            </div>
+            
+            <PanelTabsManager
+              panels={panels}
+              activeTab={activeTab}
+              signals={signals}
+              onActiveTabChange={setActiveTab}
+              onAddPanel={handleAddPanel}
+              onRemovePanel={handleRemovePanel}
+              onAddSignal={handleAddSignalToPanel}
+              onRemoveSignal={handleRemoveSignalFromPanel}
+              onToggleSignalVisibility={toggleSignalVisibility}
+              renderChartDisplay={(panelId) => (
+                <ChartDisplay
+                  containerRef={containerRef}
+                  chartType={chartType}
+                  visibleChartData={visibleChartData}
+                  zoomDomain={zoomDomain}
+                  signals={getPanelSignals(panelId)}
+                  onBrushChange={handleBrushChange}
+                />
+              )}
+            />
+            
+            <LogSample rawLogSample={rawLogSample} />
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
+export default LogChart;
