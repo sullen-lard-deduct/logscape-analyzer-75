@@ -89,11 +89,7 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
     ...lastPoint
   } : 'none');
 
-  // Set domain values for zoom
-  const domainStart = zoomDomain?.start || 'dataMin';
-  const domainEnd = zoomDomain?.end || 'dataMax';
-
-  // Determine brush indices based on dataset size
+  // Calculate brush indices based on dataset size
   const startBrushIndex = 0;
   const endBrushIndex = Math.min(Math.floor(visibleChartData.length * 0.2), visibleChartData.length - 1);
   
@@ -196,11 +192,17 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
       margin: { top: 5, right: 20, left: 10, bottom: 5 }
     };
     
+    // Define domain properly to fix the TypeScript error
+    const domain: [any, any] = [
+      zoomDomain?.start || 'dataMin', 
+      zoomDomain?.end || 'dataMax'
+    ];
+    
     // Fixed XAxis props with correct typing for domain
     const commonAxisProps = {
       dataKey: "timestamp",
       type: "number" as const,
-      domain: [domainStart, domainEnd] as [any, any], // This cast allows the string or number values
+      domain: domain,
       scale: "time" as const,
       tickFormatter: formatXAxis,
       allowDataOverflow: true

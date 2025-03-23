@@ -181,8 +181,9 @@ export const processLogDataInChunks = (
       toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
       setProcessingStatus("Formatting data for display");
       
-      // Use a more robust formatting approach
-      safelyFormatData(parsedData, newStringValueMap, formatDataCallback, setIsProcessing, setProcessingStatus);
+      // Important: We are now passing all data points directly without sampling
+      // This is vital to ensure all data points are displayed in the segmented charts
+      formatAllDataPoints(parsedData, newStringValueMap, formatDataCallback, setIsProcessing, setProcessingStatus);
     } catch (error) {
       console.error("Error finalizing data:", error);
       toast.error("Error finalizing data");
@@ -196,9 +197,9 @@ export const processLogDataInChunks = (
 };
 
 /**
- * Safely format the data with guaranteed success by using adaptive sampling
+ * Format all data points without sampling to ensure complete visualization
  */
-const safelyFormatData = (
+const formatAllDataPoints = (
   data: LogData[],
   valueMap: Record<string, Record<string, number>>,
   formatDataCallback: (data: LogData[], valueMap: Record<string, Record<string, number>>) => void,
@@ -208,30 +209,19 @@ const safelyFormatData = (
   // Use a worker-like approach with setTimeout to prevent UI freezing
   setTimeout(() => {
     try {
-      console.log(`Starting to format ${data.length} data points safely`);
+      console.log(`Formatting all ${data.length} data points`);
+      setProcessingStatus(`Formatting ${data.length.toLocaleString()} data points`);
       
-      // First, try to determine a safe sample rate
-      const sampleRate = getSafeDataSampleRate(data.length);
-      
-      // Apply sampling before formatting
-      const sampledData = evenlyDistributedSample(data, sampleRate);
-      console.log(`Using sampled data: ${sampledData.length} points (1:${sampleRate} sampling)`);
-      
-      // Set status for UI feedback
-      setProcessingStatus(`Formatting ${sampledData.length.toLocaleString()} data points for display`);
-      
-      // Format in batches to avoid UI freezing
-      formatDataInBatches(sampledData, valueMap, formatDataCallback, setIsProcessing, setProcessingStatus);
+      // Process in batches to avoid UI freezing
+      formatDataInBatches(data, valueMap, formatDataCallback, setIsProcessing, setProcessingStatus);
     } catch (error) {
-      console.error("Error in safe data formatting:", error);
+      console.error("Error in data formatting:", error);
+      toast.error("Error formatting data. Trying with reduced dataset...");
       
-      // Attempt with extreme sampling as a fallback
-      const emergencySampledData = evenlyDistributedSample(data, Math.max(10, Math.ceil(data.length / 2000)));
-      console.log(`Emergency sampling: ${emergencySampledData.length} points`);
-      toast.info(`Using reduced dataset (${emergencySampledData.length} points) due to processing limitations`);
-      
+      // Fall back to sampled data if necessary
+      const sampledData = evenlyDistributedSample(data, Math.max(5, Math.ceil(data.length / 5000)));
       try {
-        formatDataCallback(emergencySampledData, valueMap);
+        formatDataCallback(sampledData, valueMap);
       } catch (e) {
         console.error("Fatal error in data formatting:", e);
         toast.error("Could not process data. Please try with a smaller dataset or fewer patterns.");
@@ -267,6 +257,9 @@ const formatDataInBatches = (
     if (currentBatch >= batches) {
       console.log("All batches processed, returning result");
       try {
+        // We now have all data points formatted
+        console.log(`Successfully formatted all ${data.length} data points`);
+        
         // Call the callback with the formatted data
         formatDataCallback(data, valueMap);
         setProcessingStatus("");
@@ -378,32 +371,8 @@ export const evenlyDistributedSample = (data: LogData[], sampleRate: number): Lo
 };
 
 /**
- * Helper function for formatting data with better progress updates
+ * Legacy functions for backward compatibility
  */
-export const formatDataWithProgressUpdates = (
-  data: LogData[],
-  valueMap: Record<string, Record<string, number>>,
-  formatDataCallback: (data: LogData[], valueMap: Record<string, Record<string, number>>) => void,
-  setProcessingStatus: React.Dispatch<React.SetStateAction<string>>,
-  setIsProcessing: React.Dispatch<React.SetStateAction<boolean>>
-) => {
-  const totalPoints = data.length;
-  console.log(`Starting to format ${totalPoints.toLocaleString()} data points...`);
-  
-  // Use the safer batch processing approach
-  safelyFormatData(data, valueMap, formatDataCallback, setIsProcessing, setProcessingStatus);
-};
-
-/**
- * Legacy function for backward compatibility
- */
-export const formatLargeDatasetInBatches = (
-  data: LogData[],
-  valueMap: Record<string, Record<string, number>>,
-  formatDataCallback: (data: LogData[], valueMap: Record<string, Record<string, number>>) => void,
-  setProcessingStatus: React.Dispatch<React.SetStateAction<string>>,
-  setIsProcessing: React.Dispatch<React.SetStateAction<boolean>>
-) => {
-  // Redirect to the new safer implementation
-  safelyFormatData(data, valueMap, formatDataCallback, setIsProcessing, setProcessingStatus);
-};
+export const formatDataWithProgressUpdates = formatAllDataPoints;
+export const formatLargeDatasetInBatches = formatDataInBatches;
+export const safelyFormatData = formatAllDataPoints;

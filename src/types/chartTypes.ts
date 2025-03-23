@@ -69,3 +69,50 @@ export interface PanelTabsManagerProps {
   onToggleSignalVisibility: (signalId: string) => void;
   renderChartDisplay: (panelId: string) => React.ReactNode;
 }
+
+// Add missing type definitions to fix build errors
+export interface ChartControlsProps {
+  dataStats: {
+    total: number;
+    displayed: number;
+    samplingRate: number;
+    currentPage?: number;
+    totalPages?: number;
+  };
+  timeNavigation: 'preset' | 'pagination' | 'window' | 'segmented';
+  timeRangePreset: string;
+  timeWindowSize: number;
+  customTimeRange: { start?: Date; end?: Date };
+  maxDisplayPoints: number;
+  chartType: 'line' | 'bar';
+  zoomDomain: { start?: number; end?: number };
+  formattedChartData: any[];
+  currentPage: number;
+  isProcessing: boolean;
+  onTimeRangePresetChange: (preset: string) => void;
+  onTimeWindowSizeChange: (size: number) => void;
+  onNavigateTimeWindow: (direction: 'forward' | 'backward') => void;
+  onNavigateTime: (direction: 'forward' | 'backward') => void;
+  onMaxPointsChange: (value: number[]) => void;
+  onChartTypeChange: (type: 'line' | 'bar') => void;
+  onZoomReset: () => void;
+  renderPaginationControls: () => React.ReactNode;
+}
+
+export interface LogSampleProps {
+  rawLogSample: string[];
+}
+
+export interface TimeNavigationControlsProps {
+  timeNavigation: 'preset' | 'pagination' | 'window' | 'segmented';
+  timeRangePreset: string;
+  timeWindowSize: number;
+  customTimeRange: { start?: Date; end?: Date };
+  dataRange: { min?: Date; max?: Date };
+  onTimeRangePresetChange: (preset: string) => void;
+  onTimeWindowSizeChange: (size: number) => void;
+  onNavigateTimeWindow: (direction: 'forward' | 'backward') => void;
+  onNavigateTime: (direction: 'forward' | 'backward') => void;
+  isProcessing: boolean;
+  renderPaginationControls: () => React.ReactNode;
+}
