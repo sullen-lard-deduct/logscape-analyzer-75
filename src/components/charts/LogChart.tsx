@@ -32,7 +32,7 @@ import TimeNavigationControls from "./chart-components/TimeNavigationControls";
 import PanelTabsManager from "./chart-components/PanelTabsManager";
 import ChartDisplay from "./chart-components/ChartDisplay";
 import LogSample from "./chart-components/LogSample";
-import { processLogDataInChunks } from "@/utils/logProcessing";
+import { processLogDataInChunks, evenlyDistributedSample } from "@/utils/logProcessing";
 
 // Types moved to separate file for clarity
 import { 
@@ -125,38 +125,26 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       return;
     }
 
-    setProcessingStatus("Formatting data (0%)");
+    setProcessingStatus("Formatting data for display");
+    console.log(`Formatting ${data.length} data points for chart display`);
     
-    const getBatchSize = () => {
-      if (data.length > 500000) return 1000;
-      if (data.length > 100000) return 2000;
-      if (data.length > 50000) return 5000;
-      return 10000;
-    };
-    
-    const BATCH_SIZE = getBatchSize();
-    const totalBatches = Math.ceil(data.length / BATCH_SIZE);
-    const result: any[] = [];
-    
-    const timestamps = data.map(item => item.timestamp.getTime());
-    const minTime = new Date(Math.min(...timestamps));
-    const maxTime = new Date(Math.max(...timestamps));
-    setDataRange({ min: minTime, max: maxTime });
-    
-    let batchIndex = 0;
-    
-    const processBatch = () => {
-      const isLastBatch = batchIndex === totalBatches - 1;
+    try {
+      // Extract timestamps for min/max calculations
+      const timestamps = data.map(item => item.timestamp.getTime());
+      const minTime = new Date(Math.min(...timestamps));
+      const maxTime = new Date(Math.max(...timestamps));
       
-      const startIdx = batchIndex * BATCH_SIZE;
-      const endIdx = Math.min((batchIndex + 1) * BATCH_SIZE, data.length);
+      // Set data range for time navigation
+      setDataRange({ min: minTime, max: maxTime });
+      console.log(`Data time range: ${minTime.toISOString()} to ${maxTime.toISOString()}`);
       
-      for (let i = startIdx; i < endIdx; i++) {
-        const item = data[i];
+      // Pre-format the data with a single pass
+      const formattedPoints = data.map(item => {
         const dataPoint: any = {
           timestamp: item.timestamp.getTime(),
         };
         
+        // Process all values
         Object.entries(item.values).forEach(([key, value]) => {
           if (typeof value === 'string') {
             if (valueMap[key] && valueMap[key][value] !== undefined) {
@@ -170,84 +158,118 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
           }
         });
         
-        result.push(dataPoint);
-      }
+        return dataPoint;
+      });
       
-      const progress = Math.round(((batchIndex + 1) / totalBatches) * 100);
-      if (progress < 99 || isLastBatch) {
-        setProcessingStatus(`Formatting data (${progress}%)`);
-      }
+      // Store in state
+      setFormattedChartData(formattedPoints);
       
-      batchIndex++;
+      // Prepare display data with appropriate sampling
+      prepareDisplayData(formattedPoints);
       
-      if (batchIndex < totalBatches) {
-        setTimeout(processBatch, 0);
-      } else {
-        finalizeBatches();
+      // Success!
+      toast.success(`Chart data ready with ${data.length.toLocaleString()} data points`);
+    } catch (error) {
+      console.error("Error formatting chart data:", error);
+      toast.error("Error formatting chart data");
+      
+      // Try with reduced dataset as fallback
+      try {
+        console.log("Attempting with reduced dataset...");
+        const reducedData = evenlyDistributedSample(data, 10);
+        
+        // Simple direct formatting for reduced dataset
+        const reducedFormattedData = reducedData.map(item => {
+          const point: any = { timestamp: item.timestamp.getTime() };
+          Object.entries(item.values).forEach(([key, value]) => {
+            point[key] = typeof value === 'string' && valueMap[key] ? 
+              (valueMap[key][value] || 0) : value;
+          });
+          return point;
+        });
+        
+        setFormattedChartData(reducedFormattedData);
+        setDisplayedChartData(reducedFormattedData);
+        
+        // Still set the full time range
+        const timestamps = data.map(item => item.timestamp.getTime());
+        setDataRange({ 
+          min: new Date(Math.min(...timestamps)),
+          max: new Date(Math.max(...timestamps))
+        });
+        
+        toast.info(`Displaying ${reducedFormattedData.length} data points (reduced from ${data.length})`);
+      } catch (fallbackError) {
+        console.error("Fallback formatting failed:", fallbackError);
+        toast.error("Could not display chart data");
       }
-    };
-    
-    const finalizeBatches = () => {
-      setFormattedChartData(result);
-      prepareDisplayData(result);
+    } finally {
       setIsProcessing(false);
       setProcessingStatus("");
-      toast.success("Chart data ready");
-    };
-    
-    setTimeout(processBatch, 0);
+    }
   }, []);
 
   const prepareDisplayData = useCallback((data: any[]) => {
     setProcessingStatus("Preparing chart data for display");
+    console.log(`Preparing display data from ${data.length} points`);
     
-    const prepareData = () => {
-      try {
-        const total = data.length;
-        let sampled;
-        let samplingRate = 1;
+    try {
+      const total = data.length;
+      let sampled;
+      let samplingRate = 1;
+      
+      if (total > maxDisplayPoints) {
+        samplingRate = Math.ceil(total / maxDisplayPoints);
         
-        if (total > maxDisplayPoints) {
-          samplingRate = Math.ceil(total / maxDisplayPoints);
-          sampled = data.filter((_, i) => i % samplingRate === 0);
-          
-          console.log(`Sampled data from ${total} to ${sampled.length} points (rate: 1/${samplingRate})`);
-          setDataStats({ 
-            total, 
-            displayed: sampled.length, 
-            samplingRate, 
-            currentPage: 1, 
-            totalPages: Math.ceil(total / maxDisplayPoints) 
-          });
-          
-          if (timeNavigation === 'pagination') {
-            setCurrentPage(1);
-          }
-          
-          toast.info(`Displaying ${sampled.length.toLocaleString()} of ${total.toLocaleString()} data points for performance`);
-        } else {
-          sampled = data;
-          setDataStats({ 
-            total, 
-            displayed: total, 
-            samplingRate: 1,
-            currentPage: 1,
-            totalPages: 1
-          });
+        // Use evenly distributed sampling to maintain data shape
+        sampled = [];
+        for (let i = 0; i < total; i += samplingRate) {
+          sampled.push(data[i]);
         }
         
-        setDisplayedChartData(sampled);
-        setProcessingStatus("");
-        setIsProcessing(false);
-      } catch (error) {
-        console.error("Error preparing chart data:", error);
-        toast.error("Error preparing chart data");
-        setIsProcessing(false);
-        setProcessingStatus("");
+        // Always include the last point if not already included
+        if (sampled[sampled.length - 1] !== data[total - 1]) {
+          sampled.push(data[total - 1]);
+        }
+        
+        console.log(`Sampled data from ${total} to ${sampled.length} points (rate: 1/${samplingRate})`);
+        
+        setDataStats({ 
+          total, 
+          displayed: sampled.length, 
+          samplingRate, 
+          currentPage: 1, 
+          totalPages: Math.ceil(total / maxDisplayPoints) 
+        });
+        
+        if (timeNavigation === 'pagination') {
+          setCurrentPage(1);
+        }
+        
+        toast.info(`Displaying ${sampled.length.toLocaleString()} of ${total.toLocaleString()} data points for performance`);
+      } else {
+        sampled = data;
+        setDataStats({ 
+          total, 
+          displayed: total, 
+          samplingRate: 1,
+          currentPage: 1,
+          totalPages: 1
+        });
       }
-    };
+      
+      console.log(`Setting ${sampled.length} points for display`);
+      setDisplayedChartData(sampled);
+    } catch (error) {
+      console.error("Error preparing display data:", error);
+      toast.error("Error preparing chart display");
+      
+      // Fallback to the original data
+      setDisplayedChartData(data);
+    }
     
-    window.setTimeout(prepareData, 0);
+    setProcessingStatus("");
+    setIsProcessing(false);
   }, [maxDisplayPoints, timeNavigation]);
 
   const applyTimeRangeFilter = useCallback((data: any[], timeRange: { start?: Date | number, end?: Date | number }) => {
@@ -272,21 +294,40 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   }, []);
 
   const getVisibleData = useCallback(() => {
+    if (formattedChartData.length === 0) {
+      return [];
+    }
+    
     let filteredData = formattedChartData;
     
+    // Apply time range filter if specified
     if (customTimeRange.start || customTimeRange.end) {
       filteredData = applyTimeRangeFilter(formattedChartData, customTimeRange);
     }
     
+    // Apply zoom filter if specified
     if (zoomDomain.start && zoomDomain.end) {
       filteredData = filteredData.filter(
         (item) => item.timestamp >= zoomDomain.start! && item.timestamp <= zoomDomain.end!
       );
     }
     
+    // Apply sampling for better performance
     if (filteredData.length > MAX_VISIBLE_POINTS) {
       const samplingRate = Math.ceil(filteredData.length / MAX_VISIBLE_POINTS);
-      return filteredData.filter((_, i) => i % samplingRate === 0);
+      const sampled = [];
+      
+      // Use stride sampling
+      for (let i = 0; i < filteredData.length; i += samplingRate) {
+        sampled.push(filteredData[i]);
+      }
+      
+      // Always include last point if not already included
+      if (filteredData.length > 0 && sampled[sampled.length - 1] !== filteredData[filteredData.length - 1]) {
+        sampled.push(filteredData[filteredData.length - 1]);
+      }
+      
+      return sampled;
     }
     
     return filteredData;
@@ -464,7 +505,16 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
       return displayedChartData;
     }
     
-    return getVisibleData();
+    const data = getVisibleData();
+    console.log(`Visible chart data: ${data.length} points`);
+    
+    if (data.length > 0) {
+      const first = new Date(data[0].timestamp);
+      const last = new Date(data[data.length - 1].timestamp);
+      console.log(`Visible time range: ${first.toISOString()} to ${last.toISOString()}`);
+    }
+    
+    return data;
   }, [getVisibleData, displayedChartData, timeNavigation]);
 
   const handleAddPanel = useCallback(() => {
@@ -591,28 +641,39 @@ const LogChart: React.FC<LogChartProps> = ({ logContent, patterns, className }) 
   }, [maxDisplayPoints, formattedChartData, timeNavigation, dataStats, currentPage, handlePageChange, prepareDisplayData]);
 
   const handleBrushChange = useCallback((brushData: any) => {
-    if (!brushData.startIndex && brushData.startIndex !== 0) return;
-    if (!brushData.endIndex && brushData.endIndex !== 0) return;
-    if (brushData.startIndex === brushData.endIndex) return;
-    if (visibleChartData.length === 0) return;
+    console.log("Brush change:", brushData);
     
-    const startIndex = Math.max(0, brushData.startIndex);
-    const endIndex = Math.min(visibleChartData.length - 1, brushData.endIndex);
+    if (!brushData) return;
     
-    const startTimestamp = visibleChartData[startIndex]?.timestamp;
-    const endTimestamp = visibleChartData[endIndex]?.timestamp;
-    
-    if (!startTimestamp || !endTimestamp) {
-      console.error("Invalid brush data timestamps:", startTimestamp, endTimestamp);
-      return;
+    // Support both index-based and value-based brush data
+    if (brushData.startValue !== undefined && brushData.endValue !== undefined) {
+      // Value-based (direct timestamps)
+      setZoomDomain({
+        start: brushData.startValue,
+        end: brushData.endValue
+      });
+      
+      console.log(`Zoom set to ${new Date(brushData.startValue).toISOString()} - ${new Date(brushData.endValue).toISOString()}`);
+    } 
+    else if (brushData.startIndex !== undefined && brushData.endIndex !== undefined && visibleChartData.length > 0) {
+      // Index-based (from Brush component)
+      const startIndex = Math.max(0, Math.min(brushData.startIndex, visibleChartData.length - 1));
+      const endIndex = Math.max(0, Math.min(brushData.endIndex, visibleChartData.length - 1));
+      
+      if (startIndex === endIndex) return;
+      
+      const startTime = visibleChartData[startIndex]?.timestamp;
+      const endTime = visibleChartData[endIndex]?.timestamp;
+      
+      if (startTime && endTime) {
+        setZoomDomain({
+          start: startTime,
+          end: endTime
+        });
+        
+        console.log(`Zoom set to ${new Date(startTime).toISOString()} - ${new Date(endTime).toISOString()}`);
+      }
     }
-    
-    console.log("Brush zoom applied:", new Date(startTimestamp).toISOString(), new Date(endTimestamp).toISOString());
-    
-    setZoomDomain({
-      start: startTimestamp,
-      end: endTimestamp
-    });
   }, [visibleChartData]);
 
   const renderPaginationControls = useCallback(() => {

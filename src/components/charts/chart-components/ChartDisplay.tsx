@@ -68,9 +68,25 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
   }
   
   console.log(`Rendering chart with ${visibleChartData.length} data points, chart type: ${chartType}`);
-  console.log("Domain settings:", { start: zoomDomain?.start || 'dataMin', end: zoomDomain?.end || 'dataMax' });
-  console.log("First data point:", visibleChartData[0]);
-  console.log("Last data point:", visibleChartData[visibleChartData.length - 1]);
+  
+  // Log first and last data points to help with debugging
+  const firstPoint = visibleChartData[0];
+  const lastPoint = visibleChartData[visibleChartData.length - 1];
+  
+  console.log("Domain settings:", { 
+    start: zoomDomain?.start ? new Date(zoomDomain.start).toISOString() : 'dataMin', 
+    end: zoomDomain?.end ? new Date(zoomDomain.end).toISOString() : 'dataMax' 
+  });
+  
+  console.log("First data point:", firstPoint ? {
+    time: new Date(firstPoint.timestamp).toISOString(),
+    ...firstPoint
+  } : 'none');
+  
+  console.log("Last data point:", lastPoint ? {
+    time: new Date(lastPoint.timestamp).toISOString(),
+    ...lastPoint
+  } : 'none');
 
   // Set domain values for zoom
   // Fix Type Error: Ensure domain is of type AxisDomain
@@ -82,30 +98,39 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
   let startBrushIndex = 0;
   let endBrushIndex = Math.min(Math.floor(visibleChartData.length * 0.2), visibleChartData.length - 1);
   
+  if (endBrushIndex <= startBrushIndex) {
+    endBrushIndex = Math.min(startBrushIndex + 1, visibleChartData.length - 1);
+  }
+  
   // Format the time for the X axis
   const formatXAxis = (tickItem: any) => {
-    const date = new Date(tickItem);
-    return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
+    try {
+      const date = new Date(tickItem);
+      return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
+    } catch (e) {
+      return '';
+    }
   };
 
   // Handle brush change with robust error handling
   const handleBrushChange = (brushData: any) => {
-    console.log("Brush event data:", brushData);
-    
-    if (!brushData) {
-      console.log("No brush data received");
-      return;
-    }
-    
-    // For Recharts, sometimes the startIndex/endIndex can be undefined or null
-    // Also for 'dataMin'/'dataMax' zoom reset, we don't get startIndex/endIndex
-    const hasIndices = (
-      (brushData.startIndex !== undefined && brushData.startIndex !== null) || 
-      (brushData.endIndex !== undefined && brushData.endIndex !== null)
-    );
-    
-    if (!hasIndices) {
-      // If we don't have indices but have values, it's probably a direct domain selection
+    try {
+      console.log("Brush event data:", brushData);
+      
+      if (!brushData) {
+        console.log("No brush data received");
+        return;
+      }
+      
+      // For Recharts, sometimes the startIndex/endIndex can be undefined or null
+      // Also for 'dataMin'/'dataMax' zoom reset, we don't get startIndex/endIndex
+      if (brushData.startIndex === undefined && brushData.endIndex === undefined && 
+          brushData.startValue === undefined && brushData.endValue === undefined) {
+        console.log("No indices or values in brush data");
+        return;
+      }
+      
+      // If we have start/end values directly, use them
       if (brushData.startValue !== undefined && brushData.endValue !== undefined) {
         console.log(`Zooming directly from ${new Date(brushData.startValue).toISOString()} to ${new Date(brushData.endValue).toISOString()}`);
         
@@ -116,47 +141,46 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
         return;
       }
       
-      console.log("Invalid brush data - missing indices and values");
-      return;
+      // Make sure we have data to work with
+      if (!visibleChartData || visibleChartData.length === 0) {
+        console.log("No visible chart data available for zooming");
+        return;
+      }
+      
+      // Normalize startIndex and endIndex to valid ranges
+      const startIndex = Math.max(0, Math.min(visibleChartData.length - 1, brushData.startIndex || 0));
+      const endIndex = Math.max(0, Math.min(visibleChartData.length - 1, brushData.endIndex || visibleChartData.length - 1));
+      
+      // Ensure we have a reasonable range (don't zoom to a single point)
+      if (startIndex === endIndex) {
+        console.log("Brush range too small, ignoring");
+        return;
+      }
+      
+      // Get the actual timestamps from the data
+      const startTimestamp = visibleChartData[startIndex]?.timestamp;
+      const endTimestamp = visibleChartData[endIndex]?.timestamp;
+      
+      // Ensure both timestamps exist
+      if (startTimestamp === undefined || endTimestamp === undefined) {
+        console.log("Missing timestamps in chart data:", startTimestamp, endTimestamp);
+        return;
+      }
+      
+      console.log(`Zooming from ${new Date(startTimestamp).toISOString()} to ${new Date(endTimestamp).toISOString()}`);
+      
+      // Call the parent's onBrushChange with the actual timestamp values
+      onBrushChange({
+        startIndex,
+        endIndex,
+        startValue: startTimestamp,
+        endValue: endTimestamp
+      });
+      
+      toast.info("Zoomed to selected range");
+    } catch (error) {
+      console.error("Error handling brush change:", error);
     }
-    
-    // Make sure we have data to work with
-    if (!visibleChartData || visibleChartData.length === 0) {
-      console.log("No visible chart data available for zooming");
-      return;
-    }
-    
-    // Normalize startIndex and endIndex to valid ranges
-    const startIndex = Math.max(0, Math.min(visibleChartData.length - 1, brushData.startIndex || 0));
-    const endIndex = Math.max(0, Math.min(visibleChartData.length - 1, brushData.endIndex || visibleChartData.length - 1));
-    
-    // Ensure we have a reasonable range (don't zoom to a single point)
-    if (startIndex === endIndex) {
-      console.log("Brush range too small, ignoring");
-      return;
-    }
-    
-    // Get the actual timestamps from the data
-    const startTimestamp = visibleChartData[startIndex]?.timestamp;
-    const endTimestamp = visibleChartData[endIndex]?.timestamp;
-    
-    // Ensure both timestamps exist
-    if (startTimestamp === undefined || endTimestamp === undefined) {
-      console.log("Missing timestamps in chart data:", startTimestamp, endTimestamp);
-      return;
-    }
-    
-    console.log(`Zooming from ${new Date(startTimestamp).toISOString()} to ${new Date(endTimestamp).toISOString()}`);
-    
-    // Call the parent's onBrushChange with the actual timestamp values
-    onBrushChange({
-      startIndex,
-      endIndex,
-      startValue: startTimestamp,
-      endValue: endTimestamp
-    });
-    
-    toast.info("Zoomed to selected range");
   };
   
   // Create chart content based on the chart type
@@ -184,16 +208,18 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
         <YAxis />
         <RechartsTooltip content={<CustomTooltip />} />
         <Legend />
-        <Brush 
-          dataKey="timestamp" 
-          height={30} 
-          stroke="#8884d8"
-          onChange={handleBrushChange}
-          travellerWidth={10}
-          startIndex={startBrushIndex}
-          endIndex={endBrushIndex}
-          y={250}
-        />
+        {visibleChartData.length > 5 && (
+          <Brush 
+            dataKey="timestamp" 
+            height={30} 
+            stroke="#8884d8"
+            onChange={handleBrushChange}
+            travellerWidth={10}
+            startIndex={startBrushIndex}
+            endIndex={endBrushIndex}
+            y={250}
+          />
+        )}
       </>
     );
     
