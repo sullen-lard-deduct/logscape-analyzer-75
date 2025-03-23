@@ -1,11 +1,31 @@
 
+// Add the timeSegment property to ChartDisplayProps
 import { RegexPattern } from "@/components/regex/RegexManager";
 
+export const CHART_COLORS = [
+  "#4f46e5", // indigo-600
+  "#0891b2", // cyan-600 
+  "#16a34a", // green-600
+  "#ca8a04", // yellow-600
+  "#dc2626", // red-600
+  "#d946ef", // fuchsia-500
+  "#6366f1", // indigo-500
+  "#0d9488", // teal-600
+  "#c026d3", // purple-600
+  "#ea580c", // orange-600
+  "#4338ca", // indigo-700
+  "#64748b", // slate-500
+];
+
+// Data structures for log processing
 export interface LogData {
   timestamp: Date;
-  values: { [key: string]: number | string };
+  values: {
+    [key: string]: number | string;
+  };
 }
 
+// Structure for signal definitions
 export interface Signal {
   id: string;
   name: string;
@@ -14,43 +34,27 @@ export interface Signal {
   visible: boolean;
 }
 
+// Structure for chart panels
 export interface ChartPanel {
   id: string;
   signals: string[];
 }
 
+// Component props
 export interface LogChartProps {
   logContent: string;
   patterns: RegexPattern[];
   className?: string;
 }
 
-export interface ChartControlsProps {
-  dataStats: {
-    total: number;
-    displayed: number;
-    samplingRate: number;
-    currentPage?: number;
-    totalPages?: number;
-  };
-  timeNavigation: 'preset' | 'pagination' | 'window';
-  timeRangePreset: string;
-  timeWindowSize: number;
-  customTimeRange: { start?: Date; end?: Date };
-  maxDisplayPoints: number;
+export interface ChartDisplayProps {
+  containerRef: React.RefObject<HTMLDivElement>;
   chartType: 'line' | 'bar';
-  zoomDomain: { start?: number; end?: number };
-  formattedChartData: any[];
-  currentPage: number;
-  isProcessing: boolean;
-  onTimeRangePresetChange: (preset: string) => void;
-  onTimeWindowSizeChange: (size: number) => void;
-  onNavigateTimeWindow: (direction: 'forward' | 'backward') => void;
-  onNavigateTime: (direction: 'forward' | 'backward') => void;
-  onMaxPointsChange: (points: number[]) => void;
-  onChartTypeChange: (type: 'line' | 'bar') => void;
-  onZoomReset: () => void;
-  renderPaginationControls: () => React.ReactNode;
+  visibleChartData: any[];
+  zoomDomain: { start?: number, end?: number };
+  signals: Signal[];
+  onBrushChange: (brushData: any) => void;
+  timeSegment?: { start: number; end: number }; // Optional time segment for multi-chart display
 }
 
 export interface PanelTabsManagerProps {
@@ -65,41 +69,3 @@ export interface PanelTabsManagerProps {
   onToggleSignalVisibility: (signalId: string) => void;
   renderChartDisplay: (panelId: string) => React.ReactNode;
 }
-
-export interface ChartDisplayProps {
-  containerRef: React.RefObject<HTMLDivElement>;
-  chartType: 'line' | 'bar';
-  visibleChartData: any[];
-  zoomDomain: { start?: number; end?: number };
-  signals: Signal[];
-  onBrushChange: (brushData: any) => void;
-}
-
-export interface LogSampleProps {
-  rawLogSample: string[];
-}
-
-export interface TimeNavigationControlsProps {
-  timeNavigation: 'preset' | 'pagination' | 'window';
-  timeRangePreset: string;
-  timeWindowSize: number;
-  customTimeRange: { start?: Date; end?: Date };
-  onTimeRangePresetChange: (preset: string) => void;
-  onTimeWindowSizeChange: (size: number) => void;
-  onNavigateTimeWindow: (direction: 'forward' | 'backward') => void;
-  onNavigateTime: (direction: 'forward' | 'backward') => void;
-  isProcessing: boolean;
-}
-
-export const CHART_COLORS = [
-  '#3B82F6', // blue
-  '#10B981', // emerald
-  '#F97316', // orange
-  '#8B5CF6', // violet
-  '#EC4899', // pink
-  '#14B8A6', // teal
-  '#F43F5E', // rose
-  '#6366F1', // indigo
-  '#84CC16', // lime
-  '#0EA5E9', // sky
-];

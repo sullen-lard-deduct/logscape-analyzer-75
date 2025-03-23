@@ -34,7 +34,8 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
   visibleChartData,
   zoomDomain,
   signals,
-  onBrushChange
+  onBrushChange,
+  timeSegment, // Optional time segment for multi-chart display
 }) => {
   const [chartWidth, setChartWidth] = useState<number>(0);
   const [chartHeight, setChartHeight] = useState<number>(0);
@@ -89,18 +90,12 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
   } : 'none');
 
   // Set domain values for zoom
-  // Fix Type Error: Ensure domain is of type AxisDomain
-  // Use proper typing for the domain property as expected by recharts
   const domainStart = zoomDomain?.start || 'dataMin';
   const domainEnd = zoomDomain?.end || 'dataMax';
 
   // Determine brush indices based on dataset size
-  let startBrushIndex = 0;
-  let endBrushIndex = Math.min(Math.floor(visibleChartData.length * 0.2), visibleChartData.length - 1);
-  
-  if (endBrushIndex <= startBrushIndex) {
-    endBrushIndex = Math.min(startBrushIndex + 1, visibleChartData.length - 1);
-  }
+  const startBrushIndex = 0;
+  const endBrushIndex = Math.min(Math.floor(visibleChartData.length * 0.2), visibleChartData.length - 1);
   
   // Format the time for the X axis
   const formatXAxis = (tickItem: any) => {
@@ -134,9 +129,19 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
       if (brushData.startValue !== undefined && brushData.endValue !== undefined) {
         console.log(`Zooming directly from ${new Date(brushData.startValue).toISOString()} to ${new Date(brushData.endValue).toISOString()}`);
         
+        // Ensure these are numbers, not Date objects
+        const startValue = typeof brushData.startValue === 'number' 
+          ? brushData.startValue 
+          : brushData.startValue.getTime();
+          
+        const endValue = typeof brushData.endValue === 'number' 
+          ? brushData.endValue 
+          : brushData.endValue.getTime();
+        
         onBrushChange({
-          startValue: brushData.startValue,
-          endValue: brushData.endValue
+          startValue,
+          endValue,
+          timeSegment // Pass the time segment if provided
         });
         return;
       }
@@ -174,7 +179,8 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
         startIndex,
         endIndex,
         startValue: startTimestamp,
-        endValue: endTimestamp
+        endValue: endTimestamp,
+        timeSegment // Pass the time segment if provided
       });
       
       toast.info("Zoomed to selected range");
@@ -194,7 +200,6 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
     const commonAxisProps = {
       dataKey: "timestamp",
       type: "number" as const,
-      // Fix: Use a proper AxisDomain type
       domain: [domainStart, domainEnd] as [any, any], // This cast allows the string or number values
       scale: "time" as const,
       tickFormatter: formatXAxis,
@@ -216,7 +221,7 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
             onChange={handleBrushChange}
             travellerWidth={10}
             startIndex={startBrushIndex}
-            endIndex={endBrushIndex}
+            endIndex={endBrushIndex > startBrushIndex ? endBrushIndex : startBrushIndex + 1}
             y={250}
           />
         )}
@@ -261,7 +266,12 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
   
   return (
     <div className="bg-card border rounded-md p-3 h-[300px]" ref={containerRef}>
-      <ResponsiveContainer width="100%" height="100%">
+      {timeSegment && (
+        <div className="pb-2 text-sm font-medium">
+          {new Date(timeSegment.start).toLocaleString()} - {new Date(timeSegment.end).toLocaleString()}
+        </div>
+      )}
+      <ResponsiveContainer width="100%" height={timeSegment ? "90%" : "100%"}>
         {renderChartContent()}
       </ResponsiveContainer>
     </div>
