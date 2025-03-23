@@ -63,34 +63,50 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
     return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
   };
 
-  // Handle brush change and debugging
+  // Handle brush change with robust error handling
   const handleBrushChange = (brushData: any) => {
     console.log("Brush event data:", brushData);
     
-    if (!brushData || !brushData.startIndex || !brushData.endIndex) {
-      console.log("Invalid brush data", brushData);
-      return;
-    }
-    
-    if (!visibleChartData || visibleChartData.length === 0) {
-      console.log("No visible chart data available for zooming");
-      return;
-    }
-    
     try {
-      const startIndex = Math.max(0, brushData.startIndex);
-      const endIndex = Math.min(visibleChartData.length - 1, brushData.endIndex);
-      
-      if (startIndex === endIndex) {
-        console.log("Start and end indices are the same, skipping zoom");
+      // Check if brush data is valid
+      if (!brushData) {
+        console.log("No brush data received");
         return;
       }
       
-      const startTimestamp = visibleChartData[startIndex]?.timestamp;
-      const endTimestamp = visibleChartData[endIndex]?.timestamp;
+      // For Recharts, sometimes the startIndex/endIndex can be undefined or null
+      // so we need to safely check for their existence
+      const startIndex = typeof brushData.startIndex === 'number' ? brushData.startIndex : undefined;
+      const endIndex = typeof brushData.endIndex === 'number' ? brushData.endIndex : undefined;
       
-      if (!startTimestamp || !endTimestamp) {
-        console.log("Missing timestamps in chart data");
+      if (startIndex === undefined || endIndex === undefined) {
+        console.log("Invalid brush indices:", startIndex, endIndex);
+        return;
+      }
+      
+      // Make sure we have data to work with
+      if (!visibleChartData || visibleChartData.length === 0) {
+        console.log("No visible chart data available for zooming");
+        return;
+      }
+      
+      // Ensure indices are within bounds
+      const safeStartIndex = Math.max(0, startIndex);
+      const safeEndIndex = Math.min(visibleChartData.length - 1, endIndex);
+      
+      // Require at least 2 points difference to avoid micro-zooms
+      if (safeEndIndex - safeStartIndex < 2) {
+        console.log("Selected range too small, need at least 2 points");
+        return;
+      }
+      
+      // Get the actual timestamps from the data
+      const startTimestamp = visibleChartData[safeStartIndex]?.timestamp;
+      const endTimestamp = visibleChartData[safeEndIndex]?.timestamp;
+      
+      // Ensure both timestamps exist
+      if (startTimestamp === undefined || endTimestamp === undefined) {
+        console.log("Missing timestamps in chart data:", startTimestamp, endTimestamp);
         return;
       }
       
@@ -98,8 +114,8 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
       
       // Call the parent's onBrushChange with the actual timestamp values
       onBrushChange({
-        startIndex,
-        endIndex,
+        startIndex: safeStartIndex,
+        endIndex: safeEndIndex,
         startValue: startTimestamp,
         endValue: endTimestamp
       });
@@ -110,6 +126,7 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
     }
   };
 
+  // Show placeholder when no data is available
   if (!visibleChartData || visibleChartData.length === 0) {
     return (
       <div className="bg-card border rounded-md p-3 h-[300px] flex items-center justify-center" ref={containerRef}>
@@ -119,12 +136,15 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
   }
 
   console.log("Chart data summary:", {
+    chartType,
     dataPoints: visibleChartData.length,
     firstPoint: visibleChartData[0],
     lastPoint: visibleChartData[visibleChartData.length - 1],
-    signals: signals.length
+    signals: signals.length,
+    zoomDomain
   });
 
+  // Set domain values for zoom
   const domainStart = zoomDomain?.start || 'dataMin';
   const domainEnd = zoomDomain?.end || 'dataMax';
 
@@ -156,6 +176,7 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
                 stroke={signal.color}
                 activeDot={{ r: 6 }}
                 isAnimationActive={false}
+                dot={false}
               />
             ))}
             <Brush 

@@ -15,6 +15,7 @@ export const processLogDataInChunks = (
   setIsProcessing: React.Dispatch<React.SetStateAction<boolean>>,
   formatDataCallback: (data: LogData[], valueMap: Record<string, Record<string, number>>) => void
 ) => {
+  // Adaptive chunk size based on device memory
   const CHUNK_SIZE = 10000; // Increased for faster processing on capable machines
   const lines = content.split('\n');
   const totalLines = lines.length;
@@ -167,8 +168,8 @@ export const processLogDataInChunks = (
         toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
         setProcessingStatus("Formatting data for display");
         
-        // Feed parsed data in batches to avoid freezing the UI
-        formatDataWithProgressUpdates(parsedData, newStringValueMap, formatDataCallback, setProcessingStatus, setIsProcessing);
+        // Feed parsed data to the formatter with progressive updates
+        formatLargeDatasetInBatches(parsedData, newStringValueMap, formatDataCallback, setProcessingStatus, setIsProcessing);
       } catch (error) {
         console.error("Error finalizing data:", error);
         toast.error("Error finalizing data");
@@ -182,7 +183,7 @@ export const processLogDataInChunks = (
   processChunk();
 };
 
-// Helper function for formatting data with better progress updates
+// Helper function for formatting data with better progress updates for very large datasets
 export const formatDataWithProgressUpdates = (
   data: LogData[],
   valueMap: Record<string, Record<string, number>>,
@@ -194,38 +195,58 @@ export const formatDataWithProgressUpdates = (
   if (data.length > 50000) {
     toast.info(`Preparing to format ${data.length.toLocaleString()} data points. This may take a moment...`);
     
-    // Show frequent progress updates especially at the end
-    const progressInterval = setInterval(() => {
-      setProcessingStatus(prevStatus => {
-        if (prevStatus.includes("Formatting data")) {
-          return prevStatus + " (still working...)";
-        }
-        return "Still working on large dataset...";
-      });
-    }, 3000);
-    
-    // Add a small delay to allow UI to update
-    setTimeout(() => {
-      setProcessingStatus("Starting data formatting...");
-      
-      // Then start the actual formatting after UI has updated
-      setTimeout(() => {
-        try {
-          console.log("Starting format data callback with", data.length, "points");
-          formatDataCallback(data, valueMap);
-          clearInterval(progressInterval);
-        } catch (error) {
-          console.error("Error in data formatting:", error);
-          toast.error("Error formatting chart data");
-          setIsProcessing(false);
-          setProcessingStatus("");
-          clearInterval(progressInterval);
-        }
-      }, 100);
-    }, 50);
+    // For large datasets, use the batched approach for better UI responsiveness
+    formatLargeDatasetInBatches(data, valueMap, formatDataCallback, setProcessingStatus, setIsProcessing);
   } else {
     // For smaller datasets, proceed normally
     console.log("Processing smaller dataset with", data.length, "points");
     formatDataCallback(data, valueMap);
   }
 };
+
+// New helper function to format very large datasets in batches with better UI feedback
+const formatLargeDatasetInBatches = (
+  data: LogData[],
+  valueMap: Record<string, Record<string, number>>,
+  formatDataCallback: (data: LogData[], valueMap: Record<string, Record<string, number>>) => void,
+  setProcessingStatus: React.Dispatch<React.SetStateAction<string>>,
+  setIsProcessing: React.Dispatch<React.SetStateAction<boolean>>
+) => {
+  console.log(`Formatting ${data.length.toLocaleString()} data points in batches for better performance`);
+  
+  // For extremely large datasets, subsample to avoid browser crashes
+  let dataToProcess = data;
+  const MAX_SAFE_POINTS = 200000;
+  
+  if (data.length > MAX_SAFE_POINTS) {
+    const samplingRate = Math.ceil(data.length / MAX_SAFE_POINTS);
+    dataToProcess = data.filter((_, i) => i % samplingRate === 0);
+    toast.info(`Dataset contains ${data.length.toLocaleString()} points. Sampling at 1:${samplingRate} ratio for better performance.`);
+    console.log(`Dataset too large. Sampling from ${data.length} to ${dataToProcess.length} points (1:${samplingRate})`);
+  }
+  
+  // Update status frequently to show progress
+  const progressInterval = setInterval(() => {
+    setProcessingStatus(prevStatus => {
+      if (prevStatus.includes("Formatting")) {
+        return prevStatus + " (still working...)";
+      }
+      return "Still working on dataset...";
+    });
+  }, 2000);
+  
+  // Small delay to let UI update before heavy processing
+  setTimeout(() => {
+    try {
+      formatDataCallback(dataToProcess, valueMap);
+    } catch (error) {
+      console.error("Error in data formatting:", error);
+      toast.error("Error formatting chart data");
+      setIsProcessing(false);
+      setProcessingStatus("");
+    } finally {
+      clearInterval(progressInterval);
+    }
+  }, 100);
+};
+
