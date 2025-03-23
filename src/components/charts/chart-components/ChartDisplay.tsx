@@ -63,26 +63,19 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
     return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
   };
 
-  // Handle brush change with robust error handling
+  // Handle brush change with improved error handling
   const handleBrushChange = (brushData: any) => {
     console.log("Brush event data:", brushData);
     
     try {
-      // Check if brush data is valid
-      if (!brushData) {
-        console.log("No brush data received");
+      if (!brushData || (!brushData.startIndex && brushData.startIndex !== 0) || (!brushData.endIndex && brushData.endIndex !== 0)) {
+        console.log("Invalid brush data received");
         return;
       }
       
       // For Recharts, sometimes the startIndex/endIndex can be undefined or null
-      // so we need to safely check for their existence
-      const startIndex = typeof brushData.startIndex === 'number' ? brushData.startIndex : undefined;
-      const endIndex = typeof brushData.endIndex === 'number' ? brushData.endIndex : undefined;
-      
-      if (startIndex === undefined || endIndex === undefined) {
-        console.log("Invalid brush indices:", startIndex, endIndex);
-        return;
-      }
+      const startIndex = typeof brushData.startIndex === 'number' ? brushData.startIndex : 0;
+      const endIndex = typeof brushData.endIndex === 'number' ? brushData.endIndex : 0;
       
       // Make sure we have data to work with
       if (!visibleChartData || visibleChartData.length === 0) {
@@ -93,12 +86,6 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
       // Ensure indices are within bounds
       const safeStartIndex = Math.max(0, startIndex);
       const safeEndIndex = Math.min(visibleChartData.length - 1, endIndex);
-      
-      // Require at least 2 points difference to avoid micro-zooms
-      if (safeEndIndex - safeStartIndex < 2) {
-        console.log("Selected range too small, need at least 2 points");
-        return;
-      }
       
       // Get the actual timestamps from the data
       const startTimestamp = visibleChartData[safeStartIndex]?.timestamp;
@@ -123,6 +110,7 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
       toast.info("Zoomed in on selected range");
     } catch (error) {
       console.error("Error handling brush change:", error);
+      toast.error("Error applying zoom");
     }
   };
 
@@ -134,15 +122,6 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
       </div>
     );
   }
-
-  console.log("Chart data summary:", {
-    chartType,
-    dataPoints: visibleChartData.length,
-    firstPoint: visibleChartData[0],
-    lastPoint: visibleChartData[visibleChartData.length - 1],
-    signals: signals.length,
-    zoomDomain
-  });
 
   // Set domain values for zoom
   const domainStart = zoomDomain?.start || 'dataMin';
@@ -186,7 +165,7 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
               onChange={handleBrushChange}
               travellerWidth={10}
               startIndex={0}
-              endIndex={Math.min(100, visibleChartData.length - 1)}
+              endIndex={Math.min(50, visibleChartData.length - 1)}
             />
           </LineChart>
         ) : (
@@ -221,7 +200,7 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
               onChange={handleBrushChange}
               travellerWidth={10}
               startIndex={0}
-              endIndex={Math.min(100, visibleChartData.length - 1)}
+              endIndex={Math.min(50, visibleChartData.length - 1)}
             />
           </BarChart>
         )}

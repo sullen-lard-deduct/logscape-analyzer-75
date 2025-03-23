@@ -168,7 +168,7 @@ export const processLogDataInChunks = (
         toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
         setProcessingStatus("Formatting data for display");
         
-        // Feed parsed data to the formatter with progressive updates
+        // Process data in smaller batches for large datasets with better progress indicators
         formatLargeDatasetInBatches(parsedData, newStringValueMap, formatDataCallback, setProcessingStatus, setIsProcessing);
       } catch (error) {
         console.error("Error finalizing data:", error);
@@ -204,7 +204,7 @@ export const formatDataWithProgressUpdates = (
   }
 };
 
-// New helper function to format very large datasets in batches with better UI feedback
+// Improved helper function to format very large datasets in batches with enhanced error handling
 const formatLargeDatasetInBatches = (
   data: LogData[],
   valueMap: Record<string, Record<string, number>>,
@@ -216,13 +216,23 @@ const formatLargeDatasetInBatches = (
   
   // For extremely large datasets, subsample to avoid browser crashes
   let dataToProcess = data;
-  const MAX_SAFE_POINTS = 200000;
   
-  if (data.length > MAX_SAFE_POINTS) {
-    const samplingRate = Math.ceil(data.length / MAX_SAFE_POINTS);
+  // Adaptive sampling based on dataset size
+  const getSamplingRate = (size: number) => {
+    if (size > 1000000) return 10;
+    if (size > 500000) return 5;
+    if (size > 200000) return 3;
+    if (size > 125000) return 2;
+    return 1;
+  };
+  
+  const samplingRate = getSamplingRate(data.length);
+  
+  // Apply sampling for large datasets
+  if (samplingRate > 1) {
     dataToProcess = data.filter((_, i) => i % samplingRate === 0);
     toast.info(`Dataset contains ${data.length.toLocaleString()} points. Sampling at 1:${samplingRate} ratio for better performance.`);
-    console.log(`Dataset too large. Sampling from ${data.length} to ${dataToProcess.length} points (1:${samplingRate})`);
+    console.log(`Large dataset detected. Sampling from ${data.length} to ${dataToProcess.length} points (1:${samplingRate})`);
   }
   
   // Update status frequently to show progress
@@ -231,22 +241,41 @@ const formatLargeDatasetInBatches = (
       if (prevStatus.includes("Formatting")) {
         return prevStatus + " (still working...)";
       }
-      return "Still working on dataset...";
+      return prevStatus || "Processing dataset...";
     });
   }, 2000);
   
   // Small delay to let UI update before heavy processing
   setTimeout(() => {
     try {
+      // Actual data formatting
       formatDataCallback(dataToProcess, valueMap);
     } catch (error) {
       console.error("Error in data formatting:", error);
-      toast.error("Error formatting chart data");
-      setIsProcessing(false);
-      setProcessingStatus("");
+      toast.error("Error formatting chart data. Trying with a smaller dataset...");
+      
+      // On error, try with an even smaller sample
+      if (dataToProcess.length > 10000) {
+        const emergencySamplingRate = 10;
+        const emergencyData = dataToProcess.filter((_, i) => i % emergencySamplingRate === 0);
+        console.log(`Error recovery: Sampling down from ${dataToProcess.length} to ${emergencyData.length} points (1:${emergencySamplingRate})`);
+        
+        setTimeout(() => {
+          try {
+            formatDataCallback(emergencyData, valueMap);
+          } catch (secondError) {
+            console.error("Second error in data formatting:", secondError);
+            toast.error("Could not format chart data");
+            setIsProcessing(false);
+            setProcessingStatus("");
+          }
+        }, 100);
+      } else {
+        setIsProcessing(false);
+        setProcessingStatus("");
+      }
     } finally {
       clearInterval(progressInterval);
     }
   }, 100);
 };
-
