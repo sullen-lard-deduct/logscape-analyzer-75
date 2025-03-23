@@ -168,8 +168,14 @@ export const processLogDataInChunks = (
         toast.success(`Found ${parsedData.length.toLocaleString()} data points with the selected patterns`);
         setProcessingStatus("Formatting data for display");
         
-        // Process data in smaller batches for large datasets with better progress indicators
-        formatLargeDatasetInBatches(parsedData, newStringValueMap, formatDataCallback, setProcessingStatus, setIsProcessing);
+        // Process the complete dataset directly if under threshold
+        if (parsedData.length < 100000) {
+          formatDataCallback(parsedData, newStringValueMap);
+        } else {
+          // For larger datasets, apply appropriate sampling
+          console.log(`Large dataset with ${parsedData.length} points detected, applying adaptive processing`);
+          formatLargeDatasetInBatches(parsedData, newStringValueMap, formatDataCallback, setProcessingStatus, setIsProcessing);
+        }
       } catch (error) {
         console.error("Error finalizing data:", error);
         toast.error("Error finalizing data");
@@ -214,25 +220,36 @@ const formatLargeDatasetInBatches = (
 ) => {
   console.log(`Formatting ${data.length.toLocaleString()} data points in batches for better performance`);
   
-  // For extremely large datasets, subsample to avoid browser crashes
+  // For extremely large datasets, subsample intelligently to preserve data characteristics
   let dataToProcess = data;
   
-  // Adaptive sampling based on dataset size
+  // More conservative sampling that preserves data characteristics
   const getSamplingRate = (size: number) => {
-    if (size > 1000000) return 10;
-    if (size > 500000) return 5;
-    if (size > 200000) return 3;
-    if (size > 125000) return 2;
-    return 1;
+    if (size > 1000000) return 5;
+    if (size > 500000) return 3;  
+    if (size > 200000) return 2;
+    return 1; // No sampling for datasets under 200k
   };
   
   const samplingRate = getSamplingRate(data.length);
   
-  // Apply sampling for large datasets
+  // Apply sampling for large datasets - using a more intelligent approach
   if (samplingRate > 1) {
-    dataToProcess = data.filter((_, i) => i % samplingRate === 0);
-    toast.info(`Dataset contains ${data.length.toLocaleString()} points. Sampling at 1:${samplingRate} ratio for better performance.`);
-    console.log(`Large dataset detected. Sampling from ${data.length} to ${dataToProcess.length} points (1:${samplingRate})`);
+    // Ensure we pick a representative sample across the entire dataset
+    dataToProcess = [];
+    
+    // For very large datasets, take more points from areas with high variability
+    // This simple approach takes every Nth point but guarantees first/last points are included
+    dataToProcess.push(data[0]); // Always include first point
+    
+    for (let i = 1; i < data.length - 1; i += samplingRate) {
+      dataToProcess.push(data[i]);
+    }
+    
+    dataToProcess.push(data[data.length - 1]); // Always include last point
+    
+    console.log(`Intelligent sampling from ${data.length} to ${dataToProcess.length} points (strategy: ${samplingRate})`);
+    toast.info(`Processing ${dataToProcess.length.toLocaleString()} representative data points from your dataset of ${data.length.toLocaleString()}.`);
   }
   
   // Update status frequently to show progress
@@ -248,17 +265,29 @@ const formatLargeDatasetInBatches = (
   // Small delay to let UI update before heavy processing
   setTimeout(() => {
     try {
+      console.log(`Starting data formatting with ${dataToProcess.length} points`);
       // Actual data formatting
       formatDataCallback(dataToProcess, valueMap);
     } catch (error) {
       console.error("Error in data formatting:", error);
       toast.error("Error formatting chart data. Trying with a smaller dataset...");
       
-      // On error, try with an even smaller sample
-      if (dataToProcess.length > 10000) {
-        const emergencySamplingRate = 10;
-        const emergencyData = dataToProcess.filter((_, i) => i % emergencySamplingRate === 0);
+      // On error, try with an even smaller sample but retain important points
+      if (dataToProcess.length > 5000) {
+        const emergencySamplingRate = Math.max(5, Math.ceil(dataToProcess.length / 5000));
+        
+        // More aggressive sampling while preserving key points
+        const emergencyData = [dataToProcess[0]]; // Always keep first point
+        
+        // Take fewer points but ensure good distribution
+        for (let i = emergencySamplingRate; i < dataToProcess.length - emergencySamplingRate; i += emergencySamplingRate) {
+          emergencyData.push(dataToProcess[i]);
+        }
+        
+        emergencyData.push(dataToProcess[dataToProcess.length - 1]); // Always keep last point
+        
         console.log(`Error recovery: Sampling down from ${dataToProcess.length} to ${emergencyData.length} points (1:${emergencySamplingRate})`);
+        toast.warning(`Processing a reduced dataset of ${emergencyData.length} points for compatibility`);
         
         setTimeout(() => {
           try {

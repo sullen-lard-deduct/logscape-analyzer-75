@@ -74,8 +74,8 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
       }
       
       // For Recharts, sometimes the startIndex/endIndex can be undefined or null
-      const startIndex = typeof brushData.startIndex === 'number' ? brushData.startIndex : 0;
-      const endIndex = typeof brushData.endIndex === 'number' ? brushData.endIndex : 0;
+      const startIndex = typeof brushData.startIndex === 'number' ? Math.max(0, brushData.startIndex) : 0;
+      const endIndex = typeof brushData.endIndex === 'number' ? Math.min(visibleChartData.length - 1, brushData.endIndex) : visibleChartData.length - 1;
       
       // Make sure we have data to work with
       if (!visibleChartData || visibleChartData.length === 0) {
@@ -83,13 +83,9 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
         return;
       }
       
-      // Ensure indices are within bounds
-      const safeStartIndex = Math.max(0, startIndex);
-      const safeEndIndex = Math.min(visibleChartData.length - 1, endIndex);
-      
       // Get the actual timestamps from the data
-      const startTimestamp = visibleChartData[safeStartIndex]?.timestamp;
-      const endTimestamp = visibleChartData[safeEndIndex]?.timestamp;
+      const startTimestamp = visibleChartData[startIndex]?.timestamp;
+      const endTimestamp = visibleChartData[endIndex]?.timestamp;
       
       // Ensure both timestamps exist
       if (startTimestamp === undefined || endTimestamp === undefined) {
@@ -101,8 +97,8 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
       
       // Call the parent's onBrushChange with the actual timestamp values
       onBrushChange({
-        startIndex: safeStartIndex,
-        endIndex: safeEndIndex,
+        startIndex: startIndex,
+        endIndex: endIndex,
         startValue: startTimestamp,
         endValue: endTimestamp
       });
@@ -122,11 +118,19 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
       </div>
     );
   }
+  
+  console.log(`Rendering chart with ${visibleChartData.length} data points, chart type: ${chartType}`);
+  console.log("Domain settings:", { start: zoomDomain?.start || 'dataMin', end: zoomDomain?.end || 'dataMax' });
+  console.log("First few data points:", visibleChartData.slice(0, 3));
+  console.log("Last few data points:", visibleChartData.slice(-3));
 
   // Set domain values for zoom
   const domainStart = zoomDomain?.start || 'dataMin';
   const domainEnd = zoomDomain?.end || 'dataMax';
 
+  // Determine brush indices based on dataset size
+  const endBrushIndex = Math.min(50, visibleChartData.length - 1);
+  
   return (
     <div className="bg-card border rounded-md p-3 h-[300px]" ref={containerRef}>
       <ResponsiveContainer width="100%" height="100%">
@@ -142,6 +146,7 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
               type="number"
               domain={[domainStart, domainEnd]}
               scale="time"
+              allowDataOverflow={true}
             />
             <YAxis />
             <RechartsTooltip content={<CustomTooltip />} />
@@ -155,7 +160,7 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
                 stroke={signal.color}
                 activeDot={{ r: 6 }}
                 isAnimationActive={false}
-                dot={false}
+                dot={visibleChartData.length < 100}
               />
             ))}
             <Brush 
@@ -165,7 +170,8 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
               onChange={handleBrushChange}
               travellerWidth={10}
               startIndex={0}
-              endIndex={Math.min(50, visibleChartData.length - 1)}
+              endIndex={endBrushIndex}
+              y={250}
             />
           </LineChart>
         ) : (
@@ -180,6 +186,7 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
               type="number"
               domain={[domainStart, domainEnd]}
               scale="time"
+              allowDataOverflow={true}
             />
             <YAxis />
             <RechartsTooltip content={<CustomTooltip />} />
@@ -200,7 +207,8 @@ const ChartDisplay: React.FC<ChartDisplayProps> = ({
               onChange={handleBrushChange}
               travellerWidth={10}
               startIndex={0}
-              endIndex={Math.min(50, visibleChartData.length - 1)}
+              endIndex={endBrushIndex}
+              y={250}
             />
           </BarChart>
         )}
